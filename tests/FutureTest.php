@@ -1,9 +1,9 @@
 <?php
 
-namespace Pfinal\Async\Tests;
+namespace PfinalClub\Asyncio\Tests;
 
 use PHPUnit\Framework\TestCase;
-use Pfinal\Async\Future;
+use PfinalClub\Asyncio\Future;
 
 class FutureTest extends TestCase
 {

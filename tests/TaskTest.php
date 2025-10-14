@@ -1,10 +1,10 @@
 <?php
 
-namespace Pfinal\Async\Tests;
+namespace PfinalClub\Asyncio\Tests;
 
 use PHPUnit\Framework\TestCase;
-use Pfinal\Async\Task;
-use Pfinal\Async\TaskCancelledException;
+use PfinalClub\Asyncio\Task;
+use PfinalClub\Asyncio\TaskCancelledException;
 
 class TaskTest extends TestCase
 {

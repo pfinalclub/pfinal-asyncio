@@ -1,6 +1,6 @@
 <?php
 
-namespace Pfinal\Async\Http;
+namespace PfinalClub\Asyncio\Http;
 
 /**
  * HTTP 辅助函数

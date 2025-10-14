@@ -1,6 +1,6 @@
 <?php
 
-namespace Pfinal\Async;
+namespace PfinalClub\Asyncio;
 
 /**
  * Sleep - 延迟执行辅助类

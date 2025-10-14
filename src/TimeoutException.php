@@ -1,6 +1,6 @@
 <?php
 
-namespace Pfinal\Async;
+namespace PfinalClub\Asyncio;
 
 /**
  * 超时异常

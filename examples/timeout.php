@@ -5,8 +5,8 @@
 
 require_once __DIR__ . '/../vendor/autoload.php';
 
-use function Pfinal\Async\{run, sleep, wait_for, create_task};
-use Pfinal\Async\TimeoutException;
+use function PfinalClub\Asyncio\{run, sleep, wait_for, create_task};
+use PfinalClub\Asyncio\TimeoutException;
 
 /**
  * 快速任务

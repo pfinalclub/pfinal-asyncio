@@ -5,7 +5,7 @@
 
 require_once __DIR__ . '/../vendor/autoload.php';
 
-use function Pfinal\Async\{run, sleep, create_task, gather};
+use function PfinalClub\Asyncio\{run, sleep, create_task, gather};
 
 /**
  * 模拟下载文件

@@ -6,8 +6,8 @@
 
 require_once __DIR__ . '/../vendor/autoload.php';
 
-use function Pfinal\Async\{run, create_task, sleep, await_coro};
-use function Pfinal\Async\Http\fetch_url;
+use function PfinalClub\Asyncio\{run, create_task, sleep, await_coro};
+use function PfinalClub\Asyncio\Http\fetch_url;
 
 echo "
 ╔════════════════════════════════════════════════════════════╗

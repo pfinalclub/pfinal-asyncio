@@ -5,8 +5,8 @@
 
 require_once __DIR__ . '/../vendor/autoload.php';
 
-use function Pfinal\Async\{run, sleep, create_task, gather, wait_for, get_event_loop};
-use Pfinal\Async\TimeoutException;
+use function PfinalClub\Asyncio\{run, sleep, create_task, gather, wait_for, get_event_loop};
+use PfinalClub\Asyncio\TimeoutException;
 
 /**
  * 模拟 API 请求
@@ -160,7 +160,7 @@ class AsyncQueue
         }
         
         // 否则创建一个 future 等待
-        $future = new \Pfinal\Async\Future();
+        $future = new \PfinalClub\Asyncio\Future();
         $this->waiters[] = $future;
         
         return yield $future;

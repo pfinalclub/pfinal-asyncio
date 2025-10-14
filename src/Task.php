@@ -1,6 +1,6 @@
 <?php
 
-namespace Pfinal\Async;
+namespace PfinalClub\Asyncio;
 
 /**
  * 任务 - 对协程的封装

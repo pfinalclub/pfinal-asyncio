@@ -1,8 +1,8 @@
 <?php
 
-namespace Pfinal\Async\Http;
+namespace PfinalClub\Asyncio\Http;
 
-use Pfinal\Async\Future;
+use PfinalClub\Asyncio\Future;
 use Workerman\Connection\AsyncTcpConnection;
 
 /**

@@ -15,7 +15,7 @@
 ## 安装
 
 ```bash
-composer require pfinal/asyncio
+composer require pfinalclub/asyncio
 ```
 
 ## 要求
@@ -31,7 +31,7 @@ composer require pfinal/asyncio
 <?php
 require_once __DIR__ . '/vendor/autoload.php';
 
-use function Pfinal\Async\{run, sleep};
+use function PfinalClub\Asyncio\{run, sleep};
 
 // 定义一个异步函数
 function hello_world(): \Generator
@@ -51,7 +51,7 @@ echo "Result: {$result}\n";
 
 ```php
 <?php
-use function Pfinal\Async\{run, create_task, gather, sleep};
+use function PfinalClub\Asyncio\{run, create_task, gather, sleep};
 
 function task1(): \Generator
 {
@@ -88,8 +88,8 @@ run(main());
 
 ```php
 <?php
-use function Pfinal\Async\{run, wait_for, sleep};
-use Pfinal\Async\TimeoutException;
+use function PfinalClub\Asyncio\{run, wait_for, sleep};
+use PfinalClub\Asyncio\TimeoutException;
 
 function slow_task(): \Generator
 {
@@ -115,7 +115,7 @@ run(main());
 
 ```php
 <?php
-use function Pfinal\Async\{run, create_task, sleep};
+use function PfinalClub\Asyncio\{run, create_task, sleep};
 
 function background_task(string $name): \Generator
 {
@@ -153,7 +153,7 @@ run(main());
 
 ```php
 <?php
-use function Pfinal\Async\{run, create_task, gather, sleep};
+use function PfinalClub\Asyncio\{run, create_task, gather, sleep};
 
 function fetch_url(string $url): \Generator
 {
@@ -276,7 +276,7 @@ $result = yield $future;
 ### 自定义事件循环
 
 ```php
-use Pfinal\Async\EventLoop;
+use PfinalClub\Asyncio\EventLoop;
 
 $loop = EventLoop::getInstance();
 
@@ -410,7 +410,7 @@ function process_item($item): \Generator
 
 1. **PHP Generator 限制**：PHP 的 Generator 不支持真正的异步，但通过 Workerman 的事件循环，我们可以实现协作式多任务。
 
-2. **命名空间**：所有函数都在 `Pfinal\Async` 命名空间下，使用时需要导入。
+2. **命名空间**：所有函数都在 `PfinalClub\Asyncio` 命名空间下，使用时需要导入。
 
 3. **返回值**：协程函数必须返回 Generator 对象（使用 `yield`）。
 

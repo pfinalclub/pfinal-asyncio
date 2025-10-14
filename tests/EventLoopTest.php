@@ -1,10 +1,10 @@
 <?php
 
-namespace Pfinal\Async\Tests;
+namespace PfinalClub\Asyncio\Tests;
 
 use PHPUnit\Framework\TestCase;
-use Pfinal\Async\EventLoop;
-use function Pfinal\Async\{create_task, sleep};
+use PfinalClub\Asyncio\EventLoop;
+use function PfinalClub\Asyncio\{create_task, sleep};
 
 class EventLoopTest extends TestCase
 {
@@ -26,7 +26,7 @@ class EventLoopTest extends TestCase
         })());
         
         $this->assertNotNull($task);
-        $this->assertInstanceOf(\Pfinal\Async\Task::class, $task);
+        $this->assertInstanceOf(\PfinalClub\Asyncio\Task::class, $task);
     }
 }
 

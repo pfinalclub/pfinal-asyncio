@@ -6,7 +6,7 @@
 
 require_once __DIR__ . '/../vendor/autoload.php';
 
-use function Pfinal\Async\{
+use function PfinalClub\Asyncio\{
     run,
     create_task,
     gather,
@@ -14,7 +14,7 @@ use function Pfinal\Async\{
     sleep,
     get_event_loop
 };
-use Pfinal\Async\TimeoutException;
+use PfinalClub\Asyncio\TimeoutException;
 
 echo "
 ╔════════════════════════════════════════════════════════════╗
