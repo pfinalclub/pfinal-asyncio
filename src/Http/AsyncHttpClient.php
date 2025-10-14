@@ -7,91 +7,107 @@ use Workerman\Connection\AsyncTcpConnection;
 
 /**
  * 异步 HTTP 客户端
- * 基于 Workerman 的异步 TCP 连接实现
+ * 基于 Workerman 提供完整的 HTTP 请求功能
  */
 class AsyncHttpClient
 {
-    /**
-     * 异步 GET 请求
-     * 
-     * @param string $url 请求 URL
-     * @param array $headers 请求头
-     * @param float $timeout 超时时间（秒）
-     * @return \Generator
-     */
-    public static function get(string $url, array $headers = [], float $timeout = 10.0): \Generator
+    private array $defaultHeaders = [];
+    private int $timeout = 30;
+    private bool $followRedirects = true;
+    private int $maxRedirects = 5;
+    
+    public function __construct(array $options = [])
     {
-        return yield from self::request('GET', $url, null, $headers, $timeout);
+        $this->defaultHeaders = $options['headers'] ?? [
+            'User-Agent' => 'PfinalClub-AsyncIO-HTTP/1.0',
+            'Accept' => '*/*',
+            'Connection' => 'close',
+        ];
+        
+        $this->timeout = $options['timeout'] ?? 30;
+        $this->followRedirects = $options['follow_redirects'] ?? true;
+        $this->maxRedirects = $options['max_redirects'] ?? 5;
     }
     
     /**
-     * 异步 POST 请求
-     * 
-     * @param string $url 请求 URL
-     * @param mixed $data 请求数据
-     * @param array $headers 请求头
-     * @param float $timeout 超时时间（秒）
-     * @return \Generator
+     * 发送 GET 请求
      */
-    public static function post(string $url, $data = null, array $headers = [], float $timeout = 10.0): \Generator
+    public function get(string $url, array $headers = []): Future
     {
-        return yield from self::request('POST', $url, $data, $headers, $timeout);
+        return $this->request('GET', $url, null, $headers);
     }
     
     /**
-     * 异步 HTTP 请求
-     * 
-     * @param string $method HTTP 方法
-     * @param string $url 请求 URL
-     * @param mixed $data 请求数据
-     * @param array $headers 请求头
-     * @param float $timeout 超时时间
-     * @return \Generator
+     * 发送 POST 请求
      */
-    public static function request(string $method, string $url, $data = null, array $headers = [], float $timeout = 10.0): \Generator
+    public function post(string $url, $data = null, array $headers = []): Future
+    {
+        return $this->request('POST', $url, $data, $headers);
+    }
+    
+    /**
+     * 发送 PUT 请求
+     */
+    public function put(string $url, $data = null, array $headers = []): Future
+    {
+        return $this->request('PUT', $url, $data, $headers);
+    }
+    
+    /**
+     * 发送 DELETE 请求
+     */
+    public function delete(string $url, array $headers = []): Future
+    {
+        return $this->request('DELETE', $url, null, $headers);
+    }
+    
+    /**
+     * 发送 HTTP 请求
+     */
+    public function request(string $method, string $url, $data = null, array $headers = [], int $redirectCount = 0): Future
     {
         $future = new Future();
         
         // 解析 URL
-        $urlInfo = parse_url($url);
-        if (!$urlInfo) {
+        $urlParts = parse_url($url);
+        if (!$urlParts || !isset($urlParts['host'])) {
             $future->setException(new \InvalidArgumentException("Invalid URL: {$url}"));
-            return yield $future;
+            return $future;
         }
         
-        $scheme = $urlInfo['scheme'] ?? 'http';
-        $host = $urlInfo['host'] ?? 'localhost';
-        $port = $urlInfo['port'] ?? ($scheme === 'https' ? 443 : 80);
-        $path = $urlInfo['path'] ?? '/';
-        $query = isset($urlInfo['query']) ? '?' . $urlInfo['query'] : '';
+        $scheme = $urlParts['scheme'] ?? 'http';
+        $host = $urlParts['host'];
+        $port = $urlParts['port'] ?? ($scheme === 'https' ? 443 : 80);
+        $path = $urlParts['path'] ?? '/';
+        if (isset($urlParts['query'])) {
+            $path .= '?' . $urlParts['query'];
+        }
         
-        // 构建请求
-        $requestPath = $path . $query;
+        // SSL 支持
+        $address = ($scheme === 'https' ? 'ssl://' : 'tcp://') . $host . ':' . $port;
         
-        // 默认请求头
-        $defaultHeaders = [
-            'Host' => $host,
-            'User-Agent' => 'PHP-AsyncIO/1.0',
-            'Connection' => 'close',
-        ];
-        
-        $headers = array_merge($defaultHeaders, $headers);
+        // 合并请求头
+        $requestHeaders = array_merge($this->defaultHeaders, $headers);
+        $requestHeaders['Host'] = $host;
         
         // 处理请求体
         $body = '';
         if ($data !== null) {
             if (is_array($data)) {
+                $body = http_build_query($data);
+                $requestHeaders['Content-Type'] = 'application/x-www-form-urlencoded';
+            } elseif (is_string($data)) {
+                $body = $data;
+            } elseif (is_object($data)) {
                 $body = json_encode($data);
-                $headers['Content-Type'] = 'application/json';
-            } else {
-                $body = (string)$data;
+                $requestHeaders['Content-Type'] = 'application/json';
             }
-            $headers['Content-Length'] = strlen($body);
+            $requestHeaders['Content-Length'] = strlen($body);
         }
         
         // 构建 HTTP 请求
-        $request = "{$method} {$requestPath} HTTP/1.1\r\n";
-        foreach ($headers as $key => $value) {
+        $request = "{$method} {$path} HTTP/1.1\r\n";
+        foreach ($requestHeaders as $key => $value) {
             $request .= "{$key}: {$value}\r\n";
         }
         $request .= "\r\n";
@@ -100,103 +116,168 @@ class AsyncHttpClient
         }
         
         // 创建异步连接
-        $address = ($scheme === 'https' ? 'ssl://' : 'tcp://') . $host . ':' . $port;
         $connection = new AsyncTcpConnection($address);
         
-        // 设置 SSL 上下文（用于 HTTPS）
+        // SSL 上下文
         if ($scheme === 'https') {
             $connection->transport = 'ssl';
+            $connection->context = [
+                'ssl' => [
+                    'verify_peer' => false,
+                    'verify_peer_name' => false,
+                ]
+            ];
         }
         
         $responseData = '';
+        $responseHeaders = [];
+        $statusCode = 0;
+        $headersParsed = false;
         
         // 连接成功
-        $connection->onConnect = function ($connection) use ($request) {
+        $connection->onConnect = function($connection) use ($request) {
             $connection->send($request);
         };
         
         // 接收数据
-        $connection->onMessage = function ($connection, $data) use (&$responseData) {
+        $connection->onMessage = function($connection, $data) use (&$responseData, &$responseHeaders, &$statusCode, &$headersParsed) {
             $responseData .= $data;
+            
+            if (!$headersParsed && strpos($responseData, "\r\n\r\n") !== false) {
+                list($headersPart, $bodyPart) = explode("\r\n\r\n", $responseData, 2);
+                $responseData = $bodyPart;
+                
+                $headerLines = explode("\r\n", $headersPart);
+                $statusLine = array_shift($headerLines);
+                
+                if (preg_match('/HTTP\/[\d.]+\s+(\d+)/', $statusLine, $matches)) {
+                    $statusCode = (int)$matches[1];
+                }
+                
+                foreach ($headerLines as $line) {
+                    if (strpos($line, ':') !== false) {
+                        list($key, $value) = explode(':', $line, 2);
+                        $responseHeaders[trim($key)] = trim($value);
+                    }
+                }
+                
+                $headersParsed = true;
+            }
         };
         
-        // 连接关闭（请求完成）
-        $connection->onClose = function ($connection) use ($future, &$responseData) {
-            try {
-                $response = self::parseResponse($responseData);
-                $future->setResult($response);
-            } catch (\Throwable $e) {
-                $future->setException($e);
+        // 连接关闭
+        $connection->onClose = function($connection) use ($future, &$responseData, &$responseHeaders, &$statusCode, $url, $method, $redirectCount) {
+            $response = new HttpResponse(
+                $statusCode,
+                $responseHeaders,
+                $responseData
+            );
+            
+            // 处理重定向
+            if ($this->followRedirects && $redirectCount < $this->maxRedirects && in_array($statusCode, [301, 302, 303, 307, 308])) {
+                if (isset($responseHeaders['Location'])) {
+                    $redirectUrl = $responseHeaders['Location'];
+                    
+                    // 处理相对URL
+                    if (!parse_url($redirectUrl, PHP_URL_SCHEME)) {
+                        $urlParts = parse_url($url);
+                        $scheme = $urlParts['scheme'] ?? 'http';
+                        $host = $urlParts['host'];
+                        $port = $urlParts['port'] ?? ($scheme === 'https' ? 443 : 80);
+                        $portSuffix = (($scheme === 'http' && $port == 80) || ($scheme === 'https' && $port == 443)) ? '' : ":{$port}";
+                        
+                        if ($redirectUrl[0] === '/') {
+                            $redirectUrl = "{$scheme}://{$host}{$portSuffix}{$redirectUrl}";
+                        } else {
+                            $path = $urlParts['path'] ?? '/';
+                            $dir = dirname($path);
+                            $redirectUrl = "{$scheme}://{$host}{$portSuffix}{$dir}/{$redirectUrl}";
+                        }
+                    }
+                    
+                    // 303 总是使用 GET
+                    $newMethod = ($statusCode === 303) ? 'GET' : $method;
+                    
+                    $redirectFuture = $this->request($newMethod, $redirectUrl, null, [], $redirectCount + 1);
+                    $redirectFuture->addDoneCallback(function() use ($future, $redirectFuture) {
+                        try {
+                            $future->setResult($redirectFuture->getResult());
+                        } catch (\Throwable $e) {
+                            $future->setException($e);
+                        }
+                    });
+                    return;
+                }
             }
+            
+            $future->setResult($response);
         };
         
         // 连接错误
-        $connection->onError = function ($connection, $code, $msg) use ($future) {
+        $connection->onError = function($connection, $code, $msg) use ($future) {
             $future->setException(new \RuntimeException("Connection error: {$msg} (code: {$code})"));
         };
         
-        // 发起连接
+        // 启动连接
         $connection->connect();
         
-        // 设置超时
-        if ($timeout > 0) {
-            \Workerman\Timer::add($timeout, function () use ($connection, $future, $url, $timeout) {
-                if (!$future->isDone()) {
-                    $connection->close();
-                    $future->setException(new \RuntimeException("Request timeout after {$timeout}s: {$url}"));
-                }
-            }, [], false);
-        }
-        
-        return yield $future;
-    }
-    
-    /**
-     * 解析 HTTP 响应
-     * 
-     * @param string $response 原始响应数据
-     * @return array
-     */
-    private static function parseResponse(string $response): array
-    {
-        if (empty($response)) {
-            throw new \RuntimeException("Empty response");
-        }
-        
-        // 分离头部和正文
-        $parts = explode("\r\n\r\n", $response, 2);
-        if (count($parts) < 2) {
-            throw new \RuntimeException("Invalid HTTP response");
-        }
-        
-        [$headersPart, $body] = $parts;
-        
-        // 解析状态行
-        $lines = explode("\r\n", $headersPart);
-        $statusLine = array_shift($lines);
-        
-        if (!preg_match('/^HTTP\/[\d.]+\s+(\d+)\s+(.*)$/', $statusLine, $matches)) {
-            throw new \RuntimeException("Invalid HTTP status line: {$statusLine}");
-        }
-        
-        $statusCode = (int)$matches[1];
-        $statusText = $matches[2];
-        
-        // 解析响应头
-        $headers = [];
-        foreach ($lines as $line) {
-            if (strpos($line, ':') !== false) {
-                [$key, $value] = explode(':', $line, 2);
-                $headers[trim($key)] = trim($value);
-            }
-        }
-        
-        return [
-            'status_code' => $statusCode,
-            'status_text' => $statusText,
-            'headers' => $headers,
-            'body' => $body,
-        ];
+        return $future;
     }
 }
 
+/**
+ * HTTP 响应类
+ */
+class HttpResponse
+{
+    private int $statusCode;
+    private array $headers;
+    private string $body;
+    
+    public function __construct(int $statusCode, array $headers, string $body)
+    {
+        $this->statusCode = $statusCode;
+        $this->headers = $headers;
+        $this->body = $body;
+    }
+    
+    public function getStatusCode(): int
+    {
+        return $this->statusCode;
+    }
+    
+    public function getHeaders(): array
+    {
+        return $this->headers;
+    }
+    
+    public function getHeader(string $name): ?string
+    {
+        return $this->headers[$name] ?? null;
+    }
+    
+    public function getBody(): string
+    {
+        return $this->body;
+    }
+    
+    public function json(): array
+    {
+        return json_decode($this->body, true) ?? [];
+    }
+    
+    public function isSuccess(): bool
+    {
+        return $this->statusCode >= 200 && $this->statusCode < 300;
+    }
+    
+    public function isRedirect(): bool
+    {
+        return $this->statusCode >= 300 && $this->statusCode < 400;
+    }
+    
+    public function isError(): bool
+    {
+        return $this->statusCode >= 400;
+    }
+}

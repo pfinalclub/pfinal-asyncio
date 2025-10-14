@@ -20,10 +20,13 @@ function create_task(\Generator $coroutine, string $name = ''): Task
 /**
  * 运行协程直到完成
  * 类似 asyncio.run()
+ * 
+ * @param \Generator $coroutine 要运行的协程
+ * @param bool $useWorkerman 是否使用 Workerman 事件循环（默认 false，用于测试）
  */
-function run(\Generator $coroutine): mixed
+function run(\Generator $coroutine, bool $useWorkerman = false): mixed
 {
-    return EventLoop::getInstance()->run($coroutine);
+    return EventLoop::getInstance()->run($coroutine, $useWorkerman);
 }
 
 /**

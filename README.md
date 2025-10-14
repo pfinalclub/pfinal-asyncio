@@ -4,6 +4,7 @@
 
 ## 特性
 
+### 核心功能
 - 🚀 基于 Workerman 的高性能事件循环
 - 🔄 协程支持（使用 PHP Generator）
 - ⚡ 异步任务调度和管理
@@ -11,6 +12,11 @@
 - 🎯 并发控制（gather, wait_for 等）
 - 🛡️ 异常处理和任务取消
 - 📦 简洁的 API，类似 Python asyncio
+
+### 生产工具 ⭐️ NEW
+- 📊 **AsyncIO Monitor** - 实时监控任务、内存、性能指标
+- 🐛 **AsyncIO Debugger** - 追踪 await 链路，可视化协程调用栈
+- 🌐 **AsyncIO HTTP Client** - 完整的异步 HTTP 客户端（支持 SSL、重定向等）
 
 ## 安装
 

@@ -17,16 +17,18 @@
   "require-dev": {
     "phpunit/phpunit": "^10.0"
   },
-  "autoload": {
-    "psr-4": {
-      "PfinalClub\\Asyncio\\": "src/",
-      "PfinalClub\\Asyncio\\Http\\": "src/Http/"
+    "autoload": {
+        "psr-4": {
+            "PfinalClub\\Asyncio\\": "src/",
+            "PfinalClub\\Asyncio\\Http\\": "src/Http/",
+            "PfinalClub\\Asyncio\\Monitor\\": "src/Monitor/",
+            "PfinalClub\\Asyncio\\Debug\\": "src/Debug/"
+        },
+        "files": [
+            "src/functions.php",
+            "src/Http/functions.php"
+        ]
     },
-    "files": [
-      "src/functions.php",
-      "src/Http/functions.php"
-    ]
-  },
   "autoload-dev": {
     "psr-4": {
       "PfinalClub\\Asyncio\\Tests\\": "tests/"
@@ -35,6 +37,12 @@
   "scripts": {
     "test": "phpunit",
     "test-coverage": "phpunit --coverage-html coverage",
+    "benchmark": "php benchmarks/run_all.php",
+    "benchmark:task": "php benchmarks/01_task_creation.php",
+    "benchmark:concurrent": "php benchmarks/02_concurrent_tasks.php",
+    "benchmark:switch": "php benchmarks/03_context_switch.php",
+    "benchmark:memory": "php benchmarks/04_memory_usage.php",
+    "benchmark:real": "php benchmarks/05_real_world.php",
     "check-syntax": "find src -name '*.php' -exec php -l {} \\;",
     "demo": "php examples/demo.php",
     "example-basic": "php examples/basic.php",
