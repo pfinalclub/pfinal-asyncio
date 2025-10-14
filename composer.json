@@ -1,0 +1,47 @@
+{
+  "name": "pfinal/asyncio",
+  "description": "基于 Workerman 的 PHP 异步 IO 扩展包，提供类似 Python asyncio 的功能",
+  "type": "library",
+  "keywords": ["async", "asyncio", "coroutine", "workerman", "concurrent", "event-loop"],
+  "license": "MIT",
+  "authors": [
+    {
+      "name": "PFinal",
+      "email": "lampxiezi@gmail.com"
+    }
+  ],
+  "require": {
+    "php": ">=8.3",
+    "workerman/workerman": "^4.1"
+  },
+  "require-dev": {
+    "phpunit/phpunit": "^10.0"
+  },
+  "autoload": {
+    "psr-4": {
+      "Pfinal\\Async\\": "src/",
+      "Pfinal\\Async\\Http\\": "src/Http/"
+    },
+    "files": [
+      "src/functions.php",
+      "src/Http/functions.php"
+    ]
+  },
+  "autoload-dev": {
+    "psr-4": {
+      "Pfinal\\Async\\Tests\\": "tests/"
+    }
+  },
+  "scripts": {
+    "test": "phpunit",
+    "test-coverage": "phpunit --coverage-html coverage",
+    "check-syntax": "find src -name '*.php' -exec php -l {} \\;",
+    "demo": "php examples/demo.php",
+    "example-basic": "php examples/basic.php",
+    "example-concurrent": "php examples/concurrent.php",
+    "example-timeout": "php examples/timeout.php",
+    "example-advanced": "php examples/advanced.php"
+  },
+  "minimum-stability": "stable",
+  "prefer-stable": true
+}
