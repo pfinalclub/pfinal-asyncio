@@ -3,7 +3,7 @@
 namespace PfinalClub\Asyncio\Http;
 
 /**
- * HTTP 辅助函数
+ * HTTP 辅助函数 - 基于 Fiber
  */
 
 /**
@@ -12,11 +12,12 @@ namespace PfinalClub\Asyncio\Http;
  * @param string $url 要获取的 URL
  * @param array $headers 自定义请求头
  * @param float $timeout 超时时间（秒）
- * @return \Generator 返回响应数组
+ * @return HttpResponse 响应对象
  */
-function fetch_url(string $url, array $headers = [], float $timeout = 10.0): \Generator
+function fetch_url(string $url, array $headers = [], float $timeout = 10.0): HttpResponse
 {
-    return yield from AsyncHttpClient::get($url, $headers, $timeout);
+    $client = new AsyncHttpClient(['timeout' => $timeout]);
+    return $client->get($url, $headers);
 }
 
 /**
@@ -25,11 +26,12 @@ function fetch_url(string $url, array $headers = [], float $timeout = 10.0): \Ge
  * @param string $url URL
  * @param array $headers 请求头
  * @param float $timeout 超时时间
- * @return \Generator
+ * @return HttpResponse 响应对象
  */
-function http_get(string $url, array $headers = [], float $timeout = 10.0): \Generator
+function http_get(string $url, array $headers = [], float $timeout = 10.0): HttpResponse
 {
-    return yield from AsyncHttpClient::get($url, $headers, $timeout);
+    $client = new AsyncHttpClient(['timeout' => $timeout]);
+    return $client->get($url, $headers);
 }
 
 /**
@@ -39,11 +41,30 @@ function http_get(string $url, array $headers = [], float $timeout = 10.0): \Gen
  * @param mixed $data 请求数据
  * @param array $headers 请求头
  * @param float $timeout 超时时间
- * @return \Generator
+ * @return HttpResponse 响应对象
  */
-function http_post(string $url, $data = null, array $headers = [], float $timeout = 10.0): \Generator
+function http_post(string $url, $data = null, array $headers = [], float $timeout = 10.0): HttpResponse
 {
-    return yield from AsyncHttpClient::post($url, $data, $headers, $timeout);
+    $client = new AsyncHttpClient(['timeout' => $timeout]);
+    return $client->post($url, $data, $headers);
+}
+
+/**
+ * 异步 PUT 请求
+ */
+function http_put(string $url, $data = null, array $headers = [], float $timeout = 10.0): HttpResponse
+{
+    $client = new AsyncHttpClient(['timeout' => $timeout]);
+    return $client->put($url, $data, $headers);
+}
+
+/**
+ * 异步 DELETE 请求
+ */
+function http_delete(string $url, array $headers = [], float $timeout = 10.0): HttpResponse
+{
+    $client = new AsyncHttpClient(['timeout' => $timeout]);
+    return $client->delete($url, $headers);
 }
 
 /**
@@ -54,10 +75,10 @@ function http_post(string $url, $data = null, array $headers = [], float $timeou
  * @param mixed $data 请求数据
  * @param array $headers 请求头
  * @param float $timeout 超时时间
- * @return \Generator
+ * @return HttpResponse 响应对象
  */
-function http_request(string $method, string $url, $data = null, array $headers = [], float $timeout = 10.0): \Generator
+function http_request(string $method, string $url, $data = null, array $headers = [], float $timeout = 10.0): HttpResponse
 {
-    return yield from AsyncHttpClient::request($method, $url, $data, $headers, $timeout);
+    $client = new AsyncHttpClient(['timeout' => $timeout]);
+    return $client->request($method, $url, $data, $headers);
 }
-

@@ -2,23 +2,24 @@
 
 namespace PfinalClub\Asyncio;
 
+use Fiber;
 use Workerman\Timer;
 use Workerman\Worker;
+use PfinalClub\Asyncio\Monitor\PerformanceMonitor;
 
 /**
- * 事件循环 - asyncio 的核心
+ * 事件循环 - 基于 Fiber 的异步调度器
  * 负责调度和执行异步任务
  */
 class EventLoop
 {
     private static ?EventLoop $instance = null;
-    private array $tasks = [];
-    private array $callbacks = [];
+    private array $fibers = [];
     private bool $running = false;
-    private int $taskIdCounter = 0;
+    private int $fiberIdCounter = 0;
     private array $timers = [];
-    private array $callbackQueue = [];
-    private bool $lightweightMode = false;
+    private int $fiberCleanupCounter = 0;
+    private const CLEANUP_THRESHOLD = 100;
     
     private function __construct()
     {
@@ -36,144 +37,146 @@ class EventLoop
     }
     
     /**
-     * 创建新任务
+     * 创建并启动新的 Fiber 任务
      */
-    public function createTask(\Generator $coroutine, string $name = ''): Task
+    public function createFiber(callable $callback, string $name = ''): Task
     {
-        $taskId = ++$this->taskIdCounter;
-        $task = new Task($coroutine, $taskId, $name ?: "Task-{$taskId}");
-        $this->tasks[$taskId] = $task;
+        $fiberId = ++$this->fiberIdCounter;
+        $task = new Task($callback, $fiberId, $name ?: "Fiber-{$fiberId}");
         
-        // 立即调度任务
-        $this->scheduleTask($task);
+        // 启动性能监控
+        $monitor = PerformanceMonitor::getInstance();
+        $monitor->startTask($fiberId, $task->getName());
+        
+        $fiber = new Fiber(function () use ($task, $callback, $fiberId, $monitor) {
+            try {
+                $result = $callback();
+                $task->setResult($result);
+            } catch (\Throwable $e) {
+                $task->setException($e);
+            } finally {
+                // 结束性能监控
+                $monitor->endTask($fiberId);
+            }
+        });
+        
+        $this->fibers[$fiberId] = [
+            'fiber' => $fiber,
+            'task' => $task,
+            'name' => $task->getName(),
+        ];
+        
+        // 立即启动 Fiber
+        if (!$fiber->isStarted()) {
+            try {
+                $fiber->start();
+            } catch (\Throwable $e) {
+                $task->setException($e);
+            }
+        }
+        
+        // 每 100 个 Fiber 清理一次
+        $this->fiberCleanupCounter++;
+        if ($this->fiberCleanupCounter >= self::CLEANUP_THRESHOLD) {
+            $this->cleanupTerminatedFibers();
+            $this->fiberCleanupCounter = 0;
+        }
         
         return $task;
     }
     
     /**
-     * 调度任务执行
+     * 异步睡眠 - 暂停当前 Fiber
+     * 使用 Workerman Timer 实现精确的事件驱动调度
      */
-    private function scheduleTask(Task $task): void
+    public function sleep(float $seconds): void
     {
-        if ($task->isDone()) {
+        $currentFiber = Fiber::getCurrent();
+        
+        if (!$currentFiber) {
+            // 不在 Fiber 中，使用阻塞睡眠
+            usleep((int)($seconds * 1000000));
             return;
         }
         
-        Timer::add(0.001, function () use ($task) {
-            if ($task->isDone()) {
-                return;
-            }
-            
-            try {
-                $this->step($task);
+        // 直接创建 Timer，事件驱动，无需轮询
+        Timer::add($seconds, function () use ($currentFiber) {
+            if ($currentFiber->isSuspended()) {
+                try {
+                    $currentFiber->resume();
             } catch (\Throwable $e) {
-                $task->setException($e);
-            }
-        }, [], false);
-    }
-    
-    /**
-     * 执行任务的一步
-     */
-    private function step(Task $task): void
-    {
-        $coroutine = $task->getCoroutine();
-        
-        try {
-            if (!$coroutine->valid()) {
-                $task->setResult($coroutine->getReturn());
-                unset($this->tasks[$task->getId()]);
-                return;
-            }
-            
-            $yielded = $coroutine->current();
-            
-            // 处理不同类型的 yield 值
-            if ($yielded instanceof Task) {
-                // 等待另一个任务完成
-                $yielded->addDoneCallback(function () use ($task, $coroutine, $yielded) {
-                    try {
-                        if ($yielded->hasException()) {
-                            $coroutine->throw($yielded->getException());
-                        } else {
-                            $coroutine->send($yielded->getResult());
-                        }
-                        $this->scheduleTask($task);
-                    } catch (\Throwable $e) {
-                        $task->setException($e);
-                    }
-                });
-            } elseif ($yielded instanceof Future) {
-                // 等待 Future 完成
-                $yielded->addDoneCallback(function () use ($task, $coroutine, $yielded) {
-                    try {
-                        if ($yielded->hasException()) {
-                            $coroutine->throw($yielded->getException());
-                        } else {
-                            $coroutine->send($yielded->getResult());
-                        }
-                        $this->scheduleTask($task);
-                    } catch (\Throwable $e) {
-                        $task->setException($e);
-                    }
-                });
-            } elseif ($yielded instanceof Sleep) {
-                // 延迟执行
-                if ($this->lightweightMode) {
-                    // 轻量级模式：立即完成（不真正等待）
-                    $this->callSoon(function () use ($task, $coroutine) {
-                        try {
-                            $coroutine->send(null);
-                            $this->scheduleTask($task);
-                        } catch (\Throwable $e) {
-                            $task->setException($e);
-                        }
-                    });
-                } else {
-                    // 正常模式：使用 Workerman Timer
-                    $delay = max($yielded->getDelay(), 0.001); // 最小 1ms
-                    Timer::add($delay, function () use ($task, $coroutine) {
-                        try {
-                            $coroutine->send(null);
-                            $this->scheduleTask($task);
-                        } catch (\Throwable $e) {
-                            $task->setException($e);
-                        }
-                    }, [], false);
+                    error_log("Error resuming fiber after sleep: " . $e->getMessage());
                 }
-            } elseif (is_array($yielded)) {
-                // gather - 等待多个任务
-                $this->handleGather($yielded, $task, $coroutine);
-            } else {
-                // 直接继续执行
-                $coroutine->send($yielded);
-                $this->scheduleTask($task);
             }
-        } catch (\Throwable $e) {
-            $task->setException($e);
-            unset($this->tasks[$task->getId()]);
-        }
+        }, [], false); // false = 只执行一次
+        
+        // 暂停当前 Fiber
+        Fiber::suspend();
     }
     
     /**
-     * 处理 gather - 等待多个任务完成
+     * 等待任务完成
+     * 直接在回调中恢复 Fiber，无延迟
      */
-    private function handleGather(array $tasks, Task $parentTask, \Generator $coroutine): void
+    public function await(Task $task): mixed
     {
+        $currentFiber = Fiber::getCurrent();
+        
+        if (!$currentFiber) {
+            throw new \RuntimeException("await() can only be called within a Fiber");
+        }
+        
+        // 如果任务已完成，直接返回结果
+        if ($task->isDone()) {
+            return $task->getResult();
+        }
+        
+        // 设置回调，当任务完成时立即恢复 Fiber
+        $task->addDoneCallback(function () use ($currentFiber, $task) {
+            if ($currentFiber->isSuspended()) {
+                try {
+                    if ($task->hasException()) {
+                        $currentFiber->throw($task->getException());
+                        } else {
+                        $currentFiber->resume($task->getResult());
+                    }
+                    } catch (\Throwable $e) {
+                    error_log("Error resuming fiber in await: " . $e->getMessage());
+                }
+            }
+        });
+        
+        // 暂停当前 Fiber，等待任务完成
+        return Fiber::suspend();
+    }
+    
+    /**
+     * 等待多个任务完成（gather）
+     * 直接在回调中恢复 Fiber，无延迟
+     */
+    public function gather(array $tasks): array
+    {
+        if (empty($tasks)) {
+            return [];
+        }
+        
+        $currentFiber = Fiber::getCurrent();
+        
+        if (!$currentFiber) {
+            throw new \RuntimeException("gather() can only be called within a Fiber");
+        }
+        
         $results = [];
         $remaining = count($tasks);
         $hasError = false;
         $error = null;
         
-        if ($remaining === 0) {
-            $coroutine->send([]);
-            $this->scheduleTask($parentTask);
-            return;
-        }
-        
         foreach ($tasks as $index => $task) {
-            if ($task instanceof Task) {
-                $task->addDoneCallback(function () use ($task, $index, &$results, &$remaining, &$hasError, &$error, $parentTask, $coroutine) {
+            if (!($task instanceof Task)) {
+                throw new \InvalidArgumentException("gather() expects an array of Task objects");
+            }
+            
+            $task->addDoneCallback(function () use ($task, $index, &$results, &$remaining, &$hasError, &$error, $currentFiber) {
                     if ($hasError) {
                         return;
                     }
@@ -182,146 +185,94 @@ class EventLoop
                         if ($task->hasException()) {
                             $hasError = true;
                             $error = $task->getException();
-                            $coroutine->throw($error);
                         } else {
                             $results[$index] = $task->getResult();
                         }
                     } catch (\Throwable $e) {
                         $hasError = true;
                         $error = $e;
-                        $parentTask->setException($e);
-                        return;
                     }
                     
                     $remaining--;
-                    if ($remaining === 0 && !$hasError) {
-                        ksort($results);
-                        $coroutine->send(array_values($results));
-                        $this->scheduleTask($parentTask);
-                    }
-                });
-            }
-        }
-    }
-    
-    /**
-     * 运行协程直到完成
-     */
-    public function run(\Generator $coroutine, bool $useWorkerman = false): mixed
-    {
-        $task = $this->createTask($coroutine);
-        
-        // 只在需要时启动 Workerman（避免基准测试时的问题）
-        if ($useWorkerman && !Worker::$globalEvent) {
-            $this->lightweightMode = false;
-            Worker::runAll();
-        } else {
-            // 轻量级模式：使用简单的循环来完成任务
-            $this->lightweightMode = true;
-            $this->runSimpleLoop($task);
-        }
-        
-        return $task->getResult();
-    }
-    
-    /**
-     * 检查是否在轻量级模式下
-     */
-    public function isLightweightMode(): bool
-    {
-        return $this->lightweightMode;
-    }
-    
-    /**
-     * 立即调度回调
-     */
-    public function callSoon(callable $callback): void
-    {
-        $this->callbackQueue[] = $callback;
-    }
-    
-    /**
-     * 简单的事件循环（用于测试和基准测试）
-     */
-    private function runSimpleLoop(Task $task): void
-    {
-        $maxIterations = 1000000; // 防止无限循环，提高到 100 万次
-        $iterations = 0;
-        $noWorkCount = 0;
-        
-        while (!$task->isDone() && $iterations < $maxIterations) {
-            // 先处理回调队列
-            while (!empty($this->callbackQueue)) {
-                $callback = array_shift($this->callbackQueue);
-                try {
-                    $callback();
-                } catch (\Throwable $e) {
-                    // 忽略回调错误
-                }
-            }
-            
-            // 处理所有待处理的任务
-            $hasWork = false;
-            
-            foreach ($this->tasks as $t) {
-                if (!$t->isDone()) {
+                
+                // 所有任务完成，立即恢复 Fiber
+                if ($remaining === 0 && $currentFiber->isSuspended()) {
                     try {
-                        $this->step($t);
-                        $hasWork = true;
+                        if ($hasError) {
+                            $currentFiber->throw($error);
+                        } else {
+                        ksort($results);
+                            $currentFiber->resume(array_values($results));
+                        }
                     } catch (\Throwable $e) {
-                        $t->setException($e);
+                        error_log("Error resuming fiber in gather: " . $e->getMessage());
                     }
                 }
-            }
-            
-            // 如果连续多次没有工作，跳出（可能卡住了）
-            if (!$hasWork && empty($this->callbackQueue)) {
-                $noWorkCount++;
-                if ($noWorkCount > 100) {
-                    break;
-                }
-            } else {
-                $noWorkCount = 0;
-            }
-            
-            $iterations++;
+            });
         }
         
-        if ($iterations >= $maxIterations && !$task->isDone()) {
-            throw new \RuntimeException("Event loop exceeded maximum iterations (possible infinite loop). Completed $iterations iterations.");
-        }
+        // 暂停等待所有任务完成
+        return Fiber::suspend();
     }
     
     /**
-     * 运行直到所有任务完成
+     * 运行主协程
+     * 完全事件驱动，无轮询
      */
-    public function runUntilComplete(Task $task): mixed
+    public function run(callable $main): mixed
     {
-        $completed = false;
-        $result = null;
-        $exception = null;
+        $this->running = true;
         
-        $task->addDoneCallback(function () use ($task, &$completed, &$result, &$exception) {
-            $completed = true;
-            if ($task->hasException()) {
-                $exception = $task->getException();
-            } else {
-                $result = $task->getResult();
-            }
-            // 停止所有 worker
-            Timer::delAll();
-        });
-        
-        // 启动 Workerman 事件循环
+        // 使用 Workerman 事件循环（纯事件驱动）
         if (!Worker::$globalEvent) {
+            // 手动初始化 Workerman 事件循环（在创建 Fiber 之前）
+            // 这确保了 HTTP 客户端等组件可以正常工作
+            Worker::$globalEvent = new \Workerman\Events\Select();
+            Timer::init(Worker::$globalEvent);
+            
+            // 禁用 Workerman 的命令行解析（避免 "Usage" 提示）
+            global $argv;
+            $originalArgv = $argv ?? [];
+            $argv = [$_SERVER['argv'][0] ?? 'asyncio', 'start'];
+            
+            // 创建主 Fiber（此时事件循环已初始化）
+            $mainTask = $this->createFiber($main, 'main');
+            
+            // 设置完成回调，停止事件循环
+            $mainTask->addDoneCallback(function () {
+                $this->running = false;
+                Timer::delAll();
+                Worker::stopAll();
+            });
+            
+            // 纯事件驱动，Workerman 会处理所有 Timer 和事件
             Worker::runAll();
+            
+            // 恢复原始参数
+            $argv = $originalArgv;
+            } else {
+            // 已有事件循环运行
+            $mainTask = $this->createFiber($main, 'main');
+            while (!$mainTask->isDone()) {
+                usleep(1000); // 1ms
+            }
         }
         
-        if ($exception) {
-            throw $exception;
-        }
-        
+        $result = $mainTask->getResult();
+        $this->cleanupTerminatedFibers(); // 清理所有已终止的 Fiber
         return $result;
+    }
+    
+    /**
+     * 清理已终止的 Fiber（按需调用）
+     */
+    private function cleanupTerminatedFibers(): void
+    {
+        foreach ($this->fibers as $fiberId => $info) {
+            if ($info['fiber']->isTerminated()) {
+                unset($this->fibers[$fiberId]);
+            }
+        }
     }
     
     /**
@@ -353,11 +304,10 @@ class EventLoop
     }
     
     /**
-     * 获取所有活跃任务
+     * 获取所有活跃的 Fiber
      */
-    public function getActiveTasks(): array
+    public function getActiveFibers(): array
     {
-        return $this->tasks;
+        return $this->fibers;
     }
 }
-

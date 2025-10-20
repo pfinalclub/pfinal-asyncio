@@ -5,56 +5,84 @@ namespace PfinalClub\Asyncio;
 use Workerman\Timer;
 
 /**
- * 辅助函数 - 模拟 Python asyncio 的 API
+ * 辅助函数 - 提供类似 Python asyncio 的 API
+ * 基于 Fiber 实现
  */
 
 /**
- * 创建并调度一个任务
+ * 创建并调度一个异步任务
  * 类似 asyncio.create_task()
  */
-function create_task(\Generator $coroutine, string $name = ''): Task
+function create_task(callable $callback, string $name = ''): Task
 {
-    return EventLoop::getInstance()->createTask($coroutine, $name);
+    return EventLoop::getInstance()->createFiber($callback, $name);
 }
 
 /**
- * 运行协程直到完成
+ * 异步函数包装器（别名）
+ * 创建新的 Fiber 任务
+ */
+function async(callable $callback, string $name = ''): Task
+{
+    return create_task($callback, $name);
+}
+
+/**
+ * 运行主协程直到完成
  * 类似 asyncio.run()
  * 
- * @param \Generator $coroutine 要运行的协程
- * @param bool $useWorkerman 是否使用 Workerman 事件循环（默认 false，用于测试）
+ * @param callable $main 要运行的主函数
  */
-function run(\Generator $coroutine, bool $useWorkerman = false): mixed
+function run(callable $main): mixed
 {
-    return EventLoop::getInstance()->run($coroutine, $useWorkerman);
+    return EventLoop::getInstance()->run($main);
 }
 
 /**
  * 异步睡眠
  * 类似 asyncio.sleep()
+ * 
+ * 注意：此函数必须在 Fiber 上下文中调用
  */
-function sleep(float $seconds): Sleep
+function sleep(float $seconds): void
 {
-    return new Sleep($seconds);
+    EventLoop::getInstance()->sleep($seconds);
+}
+
+/**
+ * 等待任务完成
+ * 类似 await 关键字
+ * 
+ * @param Task $task 要等待的任务
+ * @return mixed 任务的返回值
+ */
+function await(Task $task): mixed
+{
+    return EventLoop::getInstance()->await($task);
 }
 
 /**
  * 并发运行多个任务并等待它们全部完成
  * 类似 asyncio.gather()
  * 
- * @param Task ...$tasks
- * @return \Generator
+ * @param Task ...$tasks 要等待的任务列表
+ * @return array 所有任务的返回值数组
  */
-function gather(Task ...$tasks): \Generator
+function gather(Task ...$tasks): array
 {
-    return yield $tasks;
+    return EventLoop::getInstance()->gather($tasks);
 }
 
 /**
  * 等待任务完成，带超时
  * 类似 asyncio.wait_for()
+ * 
+ * @param callable|Task $awaitable 可调用对象或任务
+ * @param float $timeout 超时时间（秒）
+ * @return mixed 任务的返回值
+ * @throws TimeoutException 如果超时
  */
-function wait_for(\Generator|Task $awaitable, float $timeout): \Generator
+function wait_for(callable|Task $awaitable, float $timeout): mixed
 {
     $task = $awaitable instanceof Task ? $awaitable : create_task($awaitable);
     $timedOut = false;
@@ -70,7 +98,7 @@ function wait_for(\Generator|Task $awaitable, float $timeout): \Generator
     }, [], false);
     
     try {
-        $result = yield $task;
+        $result = await($task);
         
         // 取消超时定时器
         if ($timerId && !$timedOut) {
@@ -90,7 +118,7 @@ function wait_for(\Generator|Task $awaitable, float $timeout): \Generator
  * 等待第一个完成的任务
  * 类似 asyncio.wait() with FIRST_COMPLETED
  */
-function wait_first_completed(Task ...$tasks): \Generator
+function wait_first_completed(Task ...$tasks): array
 {
     if (empty($tasks)) {
         return [[], $tasks];
@@ -109,20 +137,20 @@ function wait_first_completed(Task ...$tasks): \Generator
         });
     }
     
-    return yield $future;
+    return await_future($future);
 }
 
 /**
  * 等待所有任务完成
  * 类似 asyncio.wait() with ALL_COMPLETED
  */
-function wait_all_completed(Task ...$tasks): \Generator
+function wait_all_completed(Task ...$tasks): array
 {
     if (empty($tasks)) {
         return [[], []];
     }
     
-    $result = yield $tasks;
+    gather(...$tasks);
     $done = array_filter($tasks, fn($t) => $t->isDone());
     $pending = array_filter($tasks, fn($t) => !$t->isDone());
     
@@ -135,6 +163,40 @@ function wait_all_completed(Task ...$tasks): \Generator
 function create_future(): Future
 {
     return new Future();
+}
+
+/**
+ * 等待 Future 完成
+ * 直接在回调中恢复 Fiber，无延迟
+ */
+function await_future(Future $future): mixed
+{
+    $currentFiber = \Fiber::getCurrent();
+    
+    if (!$currentFiber) {
+        throw new \RuntimeException("await_future() can only be called within a Fiber");
+    }
+    
+    if ($future->isDone()) {
+        return $future->getResult();
+    }
+    
+    // 等待 Future 完成，立即恢复
+    $future->addDoneCallback(function () use ($currentFiber, $future) {
+        if ($currentFiber->isSuspended()) {
+            try {
+                if ($future->hasException()) {
+                    $currentFiber->throw($future->getException());
+                } else {
+                    $currentFiber->resume($future->getResult());
+                }
+            } catch (\Throwable $e) {
+                error_log("Error resuming fiber in await_future: " . $e->getMessage());
+            }
+        }
+    });
+    
+    return \Fiber::suspend();
 }
 
 /**
@@ -167,53 +229,10 @@ function call_later(float $delay, callable $callback, ...$args): int
 }
 
 /**
- * 包装阻塞式函数为异步函数
- * 使用 yield 来暂停执行
- */
-function async_wrap(callable $func): \Closure
-{
-    return function (...$args) use ($func) {
-        $future = new Future();
-        
-        call_soon(function () use ($func, $args, $future) {
-            try {
-                $result = $func(...$args);
-                $future->setResult($result);
-            } catch (\Throwable $e) {
-                $future->setException($e);
-            }
-        });
-        
-        return yield $future;
-    };
-}
-
-/**
- * 创建协程包装器
- */
-function coroutine(callable $func): \Closure
-{
-    return function (...$args) use ($func): \Generator {
-        return yield from $func(...$args);
-    };
-}
-
-/**
- * 确保参数是一个任务
- */
-function ensure_task(\Generator|Task $awaitable): Task
-{
-    if ($awaitable instanceof Task) {
-        return $awaitable;
-    }
-    return create_task($awaitable);
-}
-
-/**
  * 屏蔽任务取消
  * 类似 asyncio.shield()
  */
-function shield(Task $task): \Generator
+function shield(Task $task): mixed
 {
     $future = new Future();
     
@@ -226,27 +245,17 @@ function shield(Task $task): \Generator
     });
     
     try {
-        return yield $future;
+        return await_future($future);
     } catch (TaskCancelledException $e) {
         // 屏蔽取消，但任务继续运行
-        return yield $future;
+        return await_future($future);
     }
 }
 
 /**
- * 等待协程完成（类似 Python 的 await）
- * 这是一个语法糖，让代码更接近 Python asyncio
- * 
- * @param \Generator|Task $awaitable 要等待的协程或任务
- * @return \Generator
+ * 生成一个新的 Fiber 任务（spawn 别名）
  */
-function await_coro(\Generator|Task $awaitable): \Generator
+function spawn(callable $callback, string $name = ''): Task
 {
-    if ($awaitable instanceof Task) {
-        return yield $awaitable;
-    }
-    
-    // 如果是 Generator，直接 yield from
-    return yield from $awaitable;
+    return create_task($callback, $name);
 }
-

@@ -4,10 +4,11 @@ namespace PfinalClub\Asyncio\Http;
 
 use PfinalClub\Asyncio\Future;
 use Workerman\Connection\AsyncTcpConnection;
+use Workerman\Timer;
 
 /**
  * 异步 HTTP 客户端
- * 基于 Workerman 提供完整的 HTTP 请求功能
+ * 基于 Workerman 和 Fiber 提供完整的 HTTP 请求功能
  */
 class AsyncHttpClient
 {
@@ -15,24 +16,36 @@ class AsyncHttpClient
     private int $timeout = 30;
     private bool $followRedirects = true;
     private int $maxRedirects = 5;
+    private static ?ConnectionPool $connectionPool = null;
+    private bool $useConnectionPool = true;
     
     public function __construct(array $options = [])
     {
         $this->defaultHeaders = $options['headers'] ?? [
-            'User-Agent' => 'PfinalClub-AsyncIO-HTTP/1.0',
+            'User-Agent' => 'PfinalClub-AsyncIO-HTTP/2.0',
             'Accept' => '*/*',
-            'Connection' => 'close',
+            'Connection' => 'keep-alive',
         ];
         
         $this->timeout = $options['timeout'] ?? 30;
         $this->followRedirects = $options['follow_redirects'] ?? true;
         $this->maxRedirects = $options['max_redirects'] ?? 5;
+        $this->useConnectionPool = $options['use_connection_pool'] ?? true;
+        
+        // 初始化全局连接池
+        if (self::$connectionPool === null && $this->useConnectionPool) {
+            self::$connectionPool = new ConnectionPool([
+                'max_connections' => $options['pool_max_connections'] ?? 10,
+                'connection_timeout' => $options['pool_connection_timeout'] ?? 60.0,
+                'idle_timeout' => $options['pool_idle_timeout'] ?? 30.0,
+            ]);
+        }
     }
     
     /**
      * 发送 GET 请求
      */
-    public function get(string $url, array $headers = []): Future
+    public function get(string $url, array $headers = []): HttpResponse
     {
         return $this->request('GET', $url, null, $headers);
     }
@@ -40,7 +53,7 @@ class AsyncHttpClient
     /**
      * 发送 POST 请求
      */
-    public function post(string $url, $data = null, array $headers = []): Future
+    public function post(string $url, $data = null, array $headers = []): HttpResponse
     {
         return $this->request('POST', $url, $data, $headers);
     }
@@ -48,7 +61,7 @@ class AsyncHttpClient
     /**
      * 发送 PUT 请求
      */
-    public function put(string $url, $data = null, array $headers = []): Future
+    public function put(string $url, $data = null, array $headers = []): HttpResponse
     {
         return $this->request('PUT', $url, $data, $headers);
     }
@@ -56,23 +69,46 @@ class AsyncHttpClient
     /**
      * 发送 DELETE 请求
      */
-    public function delete(string $url, array $headers = []): Future
+    public function delete(string $url, array $headers = []): HttpResponse
     {
         return $this->request('DELETE', $url, null, $headers);
     }
     
     /**
-     * 发送 HTTP 请求
+     * 获取连接池实例
      */
-    public function request(string $method, string $url, $data = null, array $headers = [], int $redirectCount = 0): Future
+    public static function getConnectionPool(): ?ConnectionPool
     {
+        return self::$connectionPool;
+    }
+    
+    /**
+     * 获取连接池统计信息
+     */
+    public function getConnectionPoolStats(): array
+    {
+        return self::$connectionPool ? self::$connectionPool->getStats() : [];
+    }
+    
+    /**
+     * 发送 HTTP 请求
+     * 
+     * 注意：此方法会暂停当前 Fiber 直到请求完成
+     */
+    public function request(string $method, string $url, $data = null, array $headers = [], int $redirectCount = 0): HttpResponse
+    {
+        $currentFiber = \Fiber::getCurrent();
+        
+        if (!$currentFiber) {
+            throw new \RuntimeException("HTTP requests must be called within a Fiber context");
+        }
+        
         $future = new Future();
         
         // 解析 URL
         $urlParts = parse_url($url);
         if (!$urlParts || !isset($urlParts['host'])) {
-            $future->setException(new \InvalidArgumentException("Invalid URL: {$url}"));
-            return $future;
+            throw new \InvalidArgumentException("Invalid URL: {$url}");
         }
         
         $scheme = $urlParts['scheme'] ?? 'http';
@@ -115,8 +151,13 @@ class AsyncHttpClient
             $request .= $body;
         }
         
-        // 创建异步连接
+        // 创建异步连接（注意：由于 Workerman 限制，连接无法真正复用，但我们仍记录以便统计）
         $connection = new AsyncTcpConnection($address);
+        
+        // 添加到连接池统计
+        if ($this->useConnectionPool && self::$connectionPool) {
+            self::$connectionPool->addConnection($host, $port, $connection);
+        }
         
         // SSL 上下文
         if ($scheme === 'https') {
@@ -198,14 +239,12 @@ class AsyncHttpClient
                     // 303 总是使用 GET
                     $newMethod = ($statusCode === 303) ? 'GET' : $method;
                     
-                    $redirectFuture = $this->request($newMethod, $redirectUrl, null, [], $redirectCount + 1);
-                    $redirectFuture->addDoneCallback(function() use ($future, $redirectFuture) {
-                        try {
-                            $future->setResult($redirectFuture->getResult());
-                        } catch (\Throwable $e) {
-                            $future->setException($e);
-                        }
-                    });
+                    try {
+                        $redirectResponse = $this->request($newMethod, $redirectUrl, null, [], $redirectCount + 1);
+                        $future->setResult($redirectResponse);
+                    } catch (\Throwable $e) {
+                        $future->setException($e);
+                    }
                     return;
                 }
             }
@@ -221,7 +260,22 @@ class AsyncHttpClient
         // 启动连接
         $connection->connect();
         
-        return $future;
+        // 等待 Future 完成，立即恢复
+        $future->addDoneCallback(function () use ($currentFiber, $future) {
+            if ($currentFiber->isSuspended()) {
+                try {
+                    if ($future->hasException()) {
+                        $currentFiber->throw($future->getException());
+                    } else {
+                        $currentFiber->resume($future->getResult());
+                    }
+                } catch (\Throwable $e) {
+                    error_log("Error resuming fiber in HTTP request: " . $e->getMessage());
+                }
+            }
+        });
+        
+        return \Fiber::suspend();
     }
 }
 

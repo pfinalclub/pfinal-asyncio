@@ -119,20 +119,18 @@ class AsyncioDebugger
     }
     
     /**
-     * 记录 yield 操作
+     * 记录 Fiber 暂停
      */
-    public function traceYield(string $taskId, $yieldedValue): void
+    public function traceFiberSuspend(string $taskId, string $reason = ''): void
     {
         if (!$this->enabled) {
             return;
         }
         
-        $valueType = is_object($yieldedValue) ? get_class($yieldedValue) : gettype($yieldedValue);
-        
         $trace = [
-            'type' => 'yield',
+            'type' => 'fiber_suspend',
             'task_id' => $taskId,
-            'yielded_type' => $valueType,
+            'reason' => $reason,
             'depth' => $this->depth,
             'timestamp' => microtime(true),
         ];
@@ -140,7 +138,29 @@ class AsyncioDebugger
         $this->traces[] = $trace;
         $this->trimTraces();
         
-        $this->logTrace('YIELD', $taskId, $valueType, $this->depth);
+        $this->logTrace('SUSPEND', $taskId, $reason ?: 'unknown', $this->depth);
+    }
+    
+    /**
+     * 记录 Fiber 恢复
+     */
+    public function traceFiberResume(string $taskId): void
+    {
+        if (!$this->enabled) {
+            return;
+        }
+        
+        $trace = [
+            'type' => 'fiber_resume',
+            'task_id' => $taskId,
+            'depth' => $this->depth,
+            'timestamp' => microtime(true),
+        ];
+        
+        $this->traces[] = $trace;
+        $this->trimTraces();
+        
+        $this->logTrace('RESUME', $taskId, '', $this->depth);
     }
     
     /**
@@ -208,8 +228,11 @@ class AsyncioDebugger
                 $durationStr = $duration !== null ? sprintf('%.2fms', $duration * 1000) : '';
                 $message .= "← {$name} ({$durationStr})";
                 break;
-            case 'YIELD':
-                $message .= "⏸ yield {$name}";
+            case 'SUSPEND':
+                $message .= "⏸ Fiber suspended: {$name}";
+                break;
+            case 'RESUME':
+                $message .= "▶ Fiber resumed (#{$taskId})";
                 break;
             case 'EXCEPTION':
                 $message .= "❌ {$name}: {$extra}";

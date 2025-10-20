@@ -4,29 +4,31 @@ namespace PfinalClub\Asyncio\Tests;
 
 use PHPUnit\Framework\TestCase;
 use PfinalClub\Asyncio\Future;
+use function PfinalClub\Asyncio\{run, create_task, create_future, await_future};
 
 class FutureTest extends TestCase
 {
     public function testFutureCreation()
     {
-        $future = new Future();
-        
+        $future = create_future();
+        $this->assertInstanceOf(Future::class, $future);
         $this->assertFalse($future->isDone());
     }
     
-    public function testSetResult()
+    public function testFutureSetResult()
     {
-        $future = new Future();
-        $future->setResult('test result');
+        $future = create_future();
+        $future->setResult('test value');
         
         $this->assertTrue($future->isDone());
-        $this->assertEquals('test result', $future->getResult());
+        $this->assertEquals('test value', $future->getResult());
+        $this->assertFalse($future->hasException());
     }
     
-    public function testSetException()
+    public function testFutureSetException()
     {
-        $future = new Future();
-        $exception = new \Exception('test error');
+        $future = create_future();
+        $exception = new \RuntimeException('Future error');
         $future->setException($exception);
         
         $this->assertTrue($future->isDone());
@@ -34,31 +36,66 @@ class FutureTest extends TestCase
         $this->assertSame($exception, $future->getException());
     }
     
-    public function testDoneCallback()
+    public function testFutureGetResultBeforeDone()
     {
-        $future = new Future();
-        $called = false;
+        $this->expectException(\RuntimeException::class);
+        $this->expectExceptionMessage('Future not done yet');
         
-        $future->addDoneCallback(function() use (&$called) {
-            $called = true;
-        });
-        
-        $future->setResult('done');
-        
-        $this->assertTrue($called);
+        $future = create_future();
+        $future->getResult();
     }
     
-    public function testCallbackCalledImmediatelyIfDone()
+    public function testFutureSetResultTwice()
     {
-        $future = new Future();
-        $future->setResult('done');
+        $this->expectException(\RuntimeException::class);
+        $this->expectExceptionMessage('Future already done');
         
-        $called = false;
-        $future->addDoneCallback(function() use (&$called) {
-            $called = true;
+        $future = create_future();
+        $future->setResult('first');
+        $future->setResult('second');
+    }
+    
+    public function testFutureAwait()
+    {
+        $result = run(function() {
+            $future = create_future();
+            
+            // 异步设置结果
+            create_task(function() use ($future) {
+                \PfinalClub\Asyncio\sleep(0.05);
+                $future->setResult('async result');
+            }, 'setter');
+            
+            return await_future($future);
         });
         
-        $this->assertTrue($called);
+        $this->assertEquals('async result', $result);
+    }
+    
+    public function testFutureCallback()
+    {
+        $future = create_future();
+        $callbackExecuted = false;
+        
+        $future->addDoneCallback(function($f) use (&$callbackExecuted) {
+            $callbackExecuted = true;
+        });
+        
+        $future->setResult('done');
+        
+        $this->assertTrue($callbackExecuted);
+    }
+    
+    public function testFutureCallbackWhenAlreadyDone()
+    {
+        $future = create_future();
+        $future->setResult('done');
+        
+        $callbackExecuted = false;
+        $future->addDoneCallback(function($f) use (&$callbackExecuted) {
+            $callbackExecuted = true;
+        });
+        
+        $this->assertTrue($callbackExecuted, '回调应该立即执行');
     }
 }
-

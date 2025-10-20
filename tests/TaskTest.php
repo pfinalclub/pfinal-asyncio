@@ -5,72 +5,102 @@ namespace PfinalClub\Asyncio\Tests;
 use PHPUnit\Framework\TestCase;
 use PfinalClub\Asyncio\Task;
 use PfinalClub\Asyncio\TaskCancelledException;
+use function PfinalClub\Asyncio\{run, create_task, sleep};
 
 class TaskTest extends TestCase
 {
     public function testTaskCreation()
     {
-        $coroutine = (function() {
-            yield 1;
-            return 'result';
-        })();
-        
-        $task = new Task($coroutine, 1, 'test-task');
-        
-        $this->assertEquals(1, $task->getId());
-        $this->assertEquals('test-task', $task->getName());
-        $this->assertFalse($task->isDone());
-    }
-    
-    public function testSetResult()
-    {
-        $coroutine = (function() { yield; })();
-        $task = new Task($coroutine, 1, 'test');
-        
-        $task->setResult('success');
-        
-        $this->assertTrue($task->isDone());
-        $this->assertEquals('success', $task->getResult());
-    }
-    
-    public function testSetException()
-    {
-        $coroutine = (function() { yield; })();
-        $task = new Task($coroutine, 1, 'test');
-        
-        $exception = new \Exception('error');
-        $task->setException($exception);
-        
-        $this->assertTrue($task->isDone());
-        $this->assertTrue($task->hasException());
-        $this->assertSame($exception, $task->getException());
-    }
-    
-    public function testCancel()
-    {
-        $coroutine = (function() { yield; })();
-        $task = new Task($coroutine, 1, 'test');
-        
-        $result = $task->cancel();
-        
-        $this->assertTrue($result);
-        $this->assertTrue($task->isDone());
-        $this->assertInstanceOf(TaskCancelledException::class, $task->getException());
-    }
-    
-    public function testDoneCallback()
-    {
-        $coroutine = (function() { yield; })();
-        $task = new Task($coroutine, 1, 'test');
-        
-        $called = false;
-        $task->addDoneCallback(function() use (&$called) {
-            $called = true;
+        run(function() {
+            $task = create_task(function() {
+                return 'test';
+            }, 'test-task');
+            
+            $this->assertInstanceOf(Task::class, $task);
+            $this->assertEquals('test-task', $task->getName());
         });
+    }
+    
+    public function testTaskCompletion()
+    {
+        run(function() {
+            $task = create_task(function() {
+                sleep(0.01);
+                return 'completed';
+            }, 'complete-task');
+            
+            $result = \PfinalClub\Asyncio\await($task);
+            
+            $this->assertTrue($task->isDone());
+            $this->assertEquals('completed', $result);
+            $this->assertEquals('completed', $task->getResult());
+        });
+    }
+    
+    public function testTaskException()
+    {
+        $this->expectException(\RuntimeException::class);
+        $this->expectExceptionMessage('Task error');
         
-        $task->setResult('done');
-        
-        $this->assertTrue($called);
+        run(function() {
+            $task = create_task(function() {
+                throw new \RuntimeException('Task error');
+            }, 'error-task');
+            
+            \PfinalClub\Asyncio\await($task);
+        });
+    }
+    
+    public function testTaskCancel()
+    {
+        run(function() {
+            $task = create_task(function() {
+                sleep(5);
+                return 'should not complete';
+            }, 'cancel-task');
+            
+            sleep(0.01);
+            $cancelled = $task->cancel();
+            
+            $this->assertTrue($cancelled);
+            $this->assertTrue($task->isDone());
+            $this->assertTrue($task->hasException());
+            $this->assertInstanceOf(TaskCancelledException::class, $task->getException());
+        });
+    }
+    
+    public function testTaskCallback()
+    {
+        run(function() {
+            $callbackExecuted = false;
+            
+            $task = create_task(function() {
+                sleep(0.01);
+                return 'done';
+            }, 'callback-task');
+            
+            $task->addDoneCallback(function($t) use (&$callbackExecuted) {
+                $callbackExecuted = true;
+            });
+            
+            \PfinalClub\Asyncio\await($task);
+            
+            // 给回调一点时间执行
+            sleep(0.01);
+            
+            $this->assertTrue($callbackExecuted, '回调应该被执行');
+        });
+    }
+    
+    public function testTaskToString()
+    {
+        run(function() {
+            $task = create_task(function() {
+                return 'test';
+            }, 'test-task');
+            
+            $str = (string)$task;
+            $this->assertStringContainsString('test-task', $str);
+        });
     }
 }
-

@@ -3,11 +3,11 @@
 namespace PfinalClub\Asyncio;
 
 /**
- * 任务 - 对协程的封装
+ * 任务 - 对 Fiber 的封装
  */
 class Task
 {
-    private \Generator $coroutine;
+    private mixed $callable;
     private int $id;
     private string $name;
     private bool $done = false;
@@ -15,9 +15,9 @@ class Task
     private ?\Throwable $exception = null;
     private array $callbacks = [];
     
-    public function __construct(\Generator $coroutine, int $id, string $name)
+    public function __construct(callable $callable, int $id, string $name)
     {
-        $this->coroutine = $coroutine;
+        $this->callable = $callable;
         $this->id = $id;
         $this->name = $name;
     }
@@ -32,9 +32,9 @@ class Task
         return $this->name;
     }
     
-    public function getCoroutine(): \Generator
+    public function getCallable(): callable
     {
-        return $this->coroutine;
+        return $this->callable;
     }
     
     public function isDone(): bool
@@ -125,4 +125,3 @@ class Task
         return "Task({$this->name}, {$status})";
     }
 }
-

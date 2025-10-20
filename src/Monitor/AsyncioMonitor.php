@@ -3,6 +3,7 @@
 namespace PfinalClub\Asyncio\Monitor;
 
 use PfinalClub\Asyncio\EventLoop;
+use PfinalClub\Asyncio\Http\AsyncHttpClient;
 
 /**
  * Asyncio 监控器
@@ -85,31 +86,45 @@ class AsyncioMonitor
                 'peak_mb' => round($peakMemory, 2),
             ],
             'event_loop' => [
-                'mode' => $eventLoop->isLightweightMode() ? 'lightweight' : 'workerman',
+                'mode' => 'fiber-event-driven',
+                'active_fibers' => count($eventLoop->getActiveFibers()),
             ],
+            'performance' => PerformanceMonitor::getInstance()->getMetrics(),
+            'slow_tasks' => PerformanceMonitor::getInstance()->getSlowTasks(),
+            'connection_pool' => $this->getConnectionPoolStats(),
         ];
     }
     
     /**
-     * 获取任务统计
+     * 获取连接池统计信息
+     */
+    private function getConnectionPoolStats(): array
+    {
+        $pool = AsyncHttpClient::getConnectionPool();
+        return $pool ? $pool->getStats() : [];
+    }
+    
+    /**
+     * 获取 Fiber 统计
      */
     private function getTaskStats(EventLoop $eventLoop): array
     {
         // 使用反射获取私有属性（仅用于监控）
         $reflection = new \ReflectionClass($eventLoop);
         
-        $tasksProperty = $reflection->getProperty('tasks');
-        $tasksProperty->setAccessible(true);
-        $tasks = $tasksProperty->getValue($eventLoop);
+        $fibersProperty = $reflection->getProperty('fibers');
+        $fibersProperty->setAccessible(true);
+        $fibers = $fibersProperty->getValue($eventLoop);
         
         $stats = [
-            'total' => count($tasks),
+            'total' => count($fibers),
             'pending' => 0,
             'completed' => 0,
             'failed' => 0,
         ];
         
-        foreach ($tasks as $task) {
+        foreach ($fibers as $info) {
+            $task = $info['task'];
             if ($task->isDone()) {
                 if ($task->hasException()) {
                     $stats['failed']++;
