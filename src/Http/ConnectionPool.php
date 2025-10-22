@@ -37,10 +37,12 @@ class ConnectionPool
         // 从池中获取可用连接
         if (isset($this->pools[$key])) {
             foreach ($this->pools[$key] as $idx => $item) {
-                if ($item['available'] && !$item['connection']->isPaused()) {
+                $conn = $item['connection'];
+                // 检查连接是否可用且仍然建立
+                if ($item['available'] && $this->isConnectionAlive($conn)) {
                     $this->pools[$key][$idx]['available'] = false;
                     $this->pools[$key][$idx]['last_used'] = microtime(true);
-                    return $item['connection'];
+                    return $conn;
                 }
             }
         }
@@ -52,6 +54,16 @@ class ConnectionPool
         
         // 返回 null 表示需要调用者创建新连接
         return null;
+    }
+    
+    /**
+     * 检查连接是否仍然活跃
+     */
+    private function isConnectionAlive(AsyncTcpConnection $connection): bool
+    {
+        // 检查连接状态
+        // STATUS_INITIAL = 0, STATUS_CONNECTING = 1, STATUS_ESTABLISHED = 2, STATUS_CLOSING = 3, STATUS_CLOSED = 4
+        return $connection->getStatus() === AsyncTcpConnection::STATUS_ESTABLISHED;
     }
     
     /**

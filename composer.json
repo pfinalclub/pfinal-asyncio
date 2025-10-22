@@ -27,7 +27,8 @@
         "files": [
             "src/functions.php",
             "src/Http/functions.php",
-            "src/Monitor/functions.php"
+            "src/Monitor/functions.php",
+            "src/Production/functions.php"
         ]
     },
   "autoload-dev": {

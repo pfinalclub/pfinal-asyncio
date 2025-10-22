@@ -259,3 +259,14 @@ function spawn(callable $callback, string $name = ''): Task
 {
     return create_task($callback, $name);
 }
+
+/**
+ * 创建信号量
+ * 
+ * @param int $max 最大并发数
+ * @return Semaphore
+ */
+function semaphore(int $max): Semaphore
+{
+    return new Semaphore($max);
+}

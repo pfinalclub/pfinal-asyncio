@@ -56,7 +56,10 @@ class Task
     public function setException(\Throwable $exception): void
     {
         if ($this->done) {
-            return;
+            throw new \RuntimeException(
+                "Cannot set exception on completed task '{$this->name}': Task already " . 
+                ($this->exception ? 'failed with ' . get_class($this->exception) : 'completed with result')
+            );
         }
         
         $this->exception = $exception;

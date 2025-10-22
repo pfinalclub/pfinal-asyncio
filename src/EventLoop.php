@@ -20,9 +20,67 @@ class EventLoop
     private array $timers = [];
     private int $fiberCleanupCounter = 0;
     private const CLEANUP_THRESHOLD = 100;
+    private static ?string $eventLoopType = null;
     
     private function __construct()
     {
+    }
+    
+    /**
+     * 自动选择最优事件循环
+     * 优先级: Ev (libev) > Event (libevent) > Select
+     * 
+     * @return \Workerman\Events\EventInterface
+     */
+    private function selectBestEventLoop(): \Workerman\Events\EventInterface
+    {
+        // Ev - 最高性能 (libev)
+        if (extension_loaded('ev')) {
+            self::$eventLoopType = 'Ev';
+            return new \Workerman\Events\Ev();
+        }
+        
+        // Event - 高性能 (libevent)
+        if (extension_loaded('event')) {
+            self::$eventLoopType = 'Event';
+            return new \Workerman\Events\Event();
+        }
+        
+        // Select - 基础性能（兜底方案）
+        self::$eventLoopType = 'Select';
+        return new \Workerman\Events\Select();
+    }
+    
+    /**
+     * 获取当前使用的事件循环类型
+     * 
+     * @return string|null
+     */
+    public static function getEventLoopType(): ?string
+    {
+        return self::$eventLoopType;
+    }
+    
+    /**
+     * 打印事件循环性能提示
+     */
+    private function printEventLoopInfo(): void
+    {
+        $tips = [
+            'Ev' => '🚀 使用 Ev (libev) 事件循环 - 最佳性能 (100K+ 并发)',
+            'Event' => '⚡ 使用 Event (libevent) 事件循环 - 高性能 (10K+ 并发)',
+            'Select' => '⚠️  使用 Select 事件循环 - 基础性能 (<1K 并发)'
+        ];
+        
+        echo $tips[self::$eventLoopType] . "\n";
+        
+        // 如果使用 Select，提示安装更高性能的扩展
+        if (self::$eventLoopType === 'Select') {
+            echo "💡 提示: 安装 ev 或 event 扩展可提升性能 10-100 倍:\n";
+            echo "   pecl install ev      # 推荐，最高性能\n";
+            echo "   pecl install event   # 次选，高性能\n";
+        }
+        echo "\n";
     }
     
     /**
@@ -225,31 +283,32 @@ class EventLoop
         
         // 使用 Workerman 事件循环（纯事件驱动）
         if (!Worker::$globalEvent) {
-            // 手动初始化 Workerman 事件循环（在创建 Fiber 之前）
-            // 这确保了 HTTP 客户端等组件可以正常工作
-            Worker::$globalEvent = new \Workerman\Events\Select();
+            // 自动选择最优事件循环（Ev > Event > Select）
+            Worker::$globalEvent = $this->selectBestEventLoop();
             Timer::init(Worker::$globalEvent);
             
-            // 禁用 Workerman 的命令行解析（避免 "Usage" 提示）
-            global $argv;
-            $originalArgv = $argv ?? [];
-            $argv = [$_SERVER['argv'][0] ?? 'asyncio', 'start'];
+            // 打印事件循环信息
+            $this->printEventLoopInfo();
             
             // 创建主 Fiber（此时事件循环已初始化）
             $mainTask = $this->createFiber($main, 'main');
             
-            // 设置完成回调，停止事件循环
+            // 设置完成回调，直接停止事件循环
             $mainTask->addDoneCallback(function () {
                 $this->running = false;
-                Timer::delAll();
-                Worker::stopAll();
+                
+                // 使用极短延迟确保当前回调栈完成后停止
+                // 避免在回调执行过程中停止导致问题
+                Timer::add(0.001, function () {
+                    Timer::delAll();
+                    Worker::stopAll();
+                }, [], false);  // false = 只执行一次
             });
             
-            // 纯事件驱动，Workerman 会处理所有 Timer 和事件
-            Worker::runAll();
+            // 直接使用事件循环（不使用 Worker::runAll()）
+            // Worker::runAll() 是为多进程服务器设计的，这里我们只需要事件循环
+            Worker::$globalEvent->loop();
             
-            // 恢复原始参数
-            $argv = $originalArgv;
             } else {
             // 已有事件循环运行
             $mainTask = $this->createFiber($main, 'main');

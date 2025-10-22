@@ -161,7 +161,7 @@ function process_in_batches(array $items, int $batchSize = 100): array
     $batches = array_chunk($items, $batchSize);
     
     foreach ($batches as $batch) {
-        $tasks = [];
+    $tasks = [];
         foreach ($batch as $item) {
             $tasks[] = \PfinalClub\Asyncio\create_task(
                 fn() => process_item($item)

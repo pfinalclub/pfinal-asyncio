@@ -2,14 +2,14 @@
 /**
  * 基准测试 1: 任务创建开销
  * 
- * 测试创建不同数量任务的性能
+ * 测试创建不同数量任务的性能（仅测试创建，不测试执行）
  */
 
 require_once __DIR__ . '/../vendor/autoload.php';
 require_once __DIR__ . '/BenchmarkRunner.php';
 
 use PfinalClub\Asyncio\Benchmarks\BenchmarkRunner;
-use function PfinalClub\Asyncio\{run, create_task, sleep};
+use PfinalClub\Asyncio\EventLoop;
 
 $runner = new BenchmarkRunner(warmupRounds: 3, testRounds: 10);
 
@@ -19,81 +19,58 @@ echo "╚═══════════════════════�
 
 // 测试 1: 创建 100 个任务
 $runner->run("创建 100 个空任务", function() {
-    run((function(): \Generator {
-        $tasks = [];
-        for ($i = 0; $i < 100; $i++) {
-            $tasks[] = create_task((function() {
-                yield sleep(0.001);
-                return true;
-            })());
-        }
-        
-        // 等待所有任务完成
-        foreach ($tasks as $task) {
-            yield $task;
-        }
-    })());
+    $loop = EventLoop::getInstance();
+    $tasks = [];
+    for ($i = 0; $i < 100; $i++) {
+        $tasks[] = $loop->createFiber(function() {
+            return true;
+        });
+    }
+    return count($tasks);
 });
 
 // 测试 2: 创建 1000 个任务
 $runner->run("创建 1000 个空任务", function() {
-    run((function(): \Generator {
-        $tasks = [];
-        for ($i = 0; $i < 1000; $i++) {
-            $tasks[] = create_task((function() {
-                yield sleep(0.001);
-                return true;
-            })());
-        }
-        
-        foreach ($tasks as $task) {
-            yield $task;
-        }
-    })());
+    $loop = EventLoop::getInstance();
+    $tasks = [];
+    for ($i = 0; $i < 1000; $i++) {
+        $tasks[] = $loop->createFiber(function() {
+            return true;
+        });
+    }
+    return count($tasks);
 });
 
 // 测试 3: 创建 5000 个任务
 $runner->run("创建 5000 个空任务", function() {
-    run((function(): \Generator {
-        $tasks = [];
-        for ($i = 0; $i < 5000; $i++) {
-            $tasks[] = create_task((function() {
-                yield sleep(0.001);
-                return true;
-            })());
-        }
-        
-        foreach ($tasks as $task) {
-            yield $task;
-        }
-    })());
+    $loop = EventLoop::getInstance();
+    $tasks = [];
+    for ($i = 0; $i < 5000; $i++) {
+        $tasks[] = $loop->createFiber(function() {
+            return true;
+        });
+    }
+    return count($tasks);
 });
 
 // 测试 4: 嵌套任务创建
 $runner->run("嵌套任务创建 (100 个，3 层)", function() {
-    run((function(): \Generator {
-        $level1Tasks = [];
-        for ($i = 0; $i < 100; $i++) {
-            $level1Tasks[] = create_task((function() {
-                // 第二层
-                $level2Task = create_task((function() {
-                    // 第三层
-                    $level3Task = create_task((function() {
-                        yield sleep(0.001);
-                        return "level3";
-                    })());
-                    yield $level3Task;
-                    return "level2";
-                })());
-                yield $level2Task;
-                return "level1";
-            })());
-        }
-        
-        foreach ($level1Tasks as $task) {
-            yield $task;
-        }
-    })());
+    $loop = EventLoop::getInstance();
+    $level1Tasks = [];
+    for ($i = 0; $i < 100; $i++) {
+        $level1Tasks[] = $loop->createFiber(function() use ($loop) {
+            // 第二层
+            $level2Task = $loop->createFiber(function() use ($loop) {
+                // 第三层
+                $level3Task = $loop->createFiber(function() {
+                    return "level3";
+                });
+                return $level3Task->getId();
+            });
+            return $level2Task->getId();
+        });
+    }
+    return count($level1Tasks);
 });
 
 // 生成并保存报告

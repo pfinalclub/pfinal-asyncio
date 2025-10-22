@@ -1,15 +1,15 @@
 性能基准测试汇总
 ================================================================================
 
-PHP 版本: 8.3.19
-测试时间: 2025-10-14 05:35:40
-总耗时: 3.55 秒
+PHP 版本: 8.4.13
+测试时间: 2025-10-21 10:30:45
+总耗时: 5.38 秒
 
 测试文件:
-  ✓ 任务创建开销: /var/www/html/asyncio/benchmarks/reports/01_task_creation.txt
-  ✓ 并发任务性能: /var/www/html/asyncio/benchmarks/reports/02_concurrent_tasks.txt
-  ✓ 上下文切换延迟: /var/www/html/asyncio/benchmarks/reports/03_context_switch.txt
-  ✓ 内存使用分析: /var/www/html/asyncio/benchmarks/reports/04_memory_usage.txt
-  ✓ 真实场景模拟: /var/www/html/asyncio/benchmarks/reports/05_real_world.txt
+  ✓ 任务创建开销: /Users/pfinal/www/asyncio/benchmarks/reports/01_task_creation.txt
+  ✓ 并发任务性能: /Users/pfinal/www/asyncio/benchmarks/reports/02_concurrent_tasks.txt
+  ✓ 上下文切换延迟: /Users/pfinal/www/asyncio/benchmarks/reports/03_context_switch.txt
+  ✓ 内存使用分析: /Users/pfinal/www/asyncio/benchmarks/reports/04_memory_usage.txt
+  ✓ 真实场景模拟: /Users/pfinal/www/asyncio/benchmarks/reports/05_real_world.txt
 
 详细报告请查看各个测试文件的输出。

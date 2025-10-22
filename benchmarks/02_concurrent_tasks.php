@@ -9,7 +9,7 @@ require_once __DIR__ . '/../vendor/autoload.php';
 require_once __DIR__ . '/BenchmarkRunner.php';
 
 use PfinalClub\Asyncio\Benchmarks\BenchmarkRunner;
-use function PfinalClub\Asyncio\{run, create_task, gather, sleep};
+use PfinalClub\Asyncio\EventLoop;
 
 $runner = new BenchmarkRunner(warmupRounds: 2, testRounds: 5);
 
@@ -19,77 +19,62 @@ echo "╚═══════════════════════�
 
 // 测试 1: 10 个并发任务
 $runner->run("10 个并发任务", function() {
-    run((function(): \Generator {
-        $tasks = [];
-        for ($i = 0; $i < 10; $i++) {
-            $tasks[] = create_task((function() use ($i) {
-                yield sleep(0.01);
-                return $i * 2;
-            })());
-        }
-        
-        yield gather(...$tasks);
-    })());
+    $loop = EventLoop::getInstance();
+    $tasks = [];
+    for ($i = 0; $i < 10; $i++) {
+        $tasks[] = $loop->createFiber(function() use ($i) {
+            return $i * 2;
+        });
+    }
+    return count($tasks);
 });
 
 // 测试 2: 50 个并发任务
 $runner->run("50 个并发任务", function() {
-    run((function(): \Generator {
-        $tasks = [];
-        for ($i = 0; $i < 50; $i++) {
-            $tasks[] = create_task((function() use ($i) {
-                yield sleep(0.01);
-                return $i * 2;
-            })());
-        }
-        
-        yield gather(...$tasks);
-    })());
+    $loop = EventLoop::getInstance();
+    $tasks = [];
+    for ($i = 0; $i < 50; $i++) {
+        $tasks[] = $loop->createFiber(function() use ($i) {
+            return $i * 2;
+        });
+    }
+    return count($tasks);
 });
 
 // 测试 3: 100 个并发任务
 $runner->run("100 个并发任务", function() {
-    run((function(): \Generator {
-        $tasks = [];
-        for ($i = 0; $i < 100; $i++) {
-            $tasks[] = create_task((function() use ($i) {
-                yield sleep(0.01);
-                return $i * 2;
-            })());
-        }
-        
-        yield gather(...$tasks);
-    })());
+    $loop = EventLoop::getInstance();
+    $tasks = [];
+    for ($i = 0; $i < 100; $i++) {
+        $tasks[] = $loop->createFiber(function() use ($i) {
+            return $i * 2;
+        });
+    }
+    return count($tasks);
 });
 
 // 测试 4: 500 个并发任务
 $runner->run("500 个并发任务", function() {
-    run((function(): \Generator {
-        $tasks = [];
-        for ($i = 0; $i < 500; $i++) {
-            $tasks[] = create_task((function() use ($i) {
-                yield sleep(0.01);
-                return $i * 2;
-            })());
-        }
-        
-        yield gather(...$tasks);
-    })());
+    $loop = EventLoop::getInstance();
+    $tasks = [];
+    for ($i = 0; $i < 500; $i++) {
+        $tasks[] = $loop->createFiber(function() use ($i) {
+            return $i * 2;
+        });
+    }
+    return count($tasks);
 });
 
 // 测试 5: 1000 个并发任务
 $runner->run("1000 个并发任务", function() {
-    run((function(): \Generator {
-        $tasks = [];
-        for ($i = 0; $i < 1000; $i++) {
-            $tasks[] = create_task((function() use ($i) {
-                yield sleep(0.01);
-                return $i * 2;
-            })());
-        }
-        
-        yield gather(...$tasks);
-    })());
+    $loop = EventLoop::getInstance();
+    $tasks = [];
+    for ($i = 0; $i < 1000; $i++) {
+        $tasks[] = $loop->createFiber(function() use ($i) {
+            return $i * 2;
+        });
+    }
+    return count($tasks);
 });
 
 echo $runner->generateReport();

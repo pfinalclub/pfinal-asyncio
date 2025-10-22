@@ -141,6 +141,10 @@ class AsyncHttpClient
             $requestHeaders['Content-Length'] = strlen($body);
         }
         
+        // 添加 Keep-Alive 支持
+        $requestHeaders['Connection'] = 'keep-alive';
+        $requestHeaders['Keep-Alive'] = 'timeout=30, max=100';
+        
         // 构建 HTTP 请求
         $request = "{$method} {$path} HTTP/1.1\r\n";
         foreach ($requestHeaders as $key => $value) {
@@ -151,16 +155,19 @@ class AsyncHttpClient
             $request .= $body;
         }
         
-        // 创建异步连接（注意：由于 Workerman 限制，连接无法真正复用，但我们仍记录以便统计）
+        // 创建新连接
+        // 注意：由于 Workerman AsyncTcpConnection 的限制，每个请求都需要新连接
+        // Keep-Alive 头会被发送，但连接复用由 TCP/IP 栈在更低层处理
         $connection = new AsyncTcpConnection($address);
+        $reusedConnection = false;
         
         // 添加到连接池统计
         if ($this->useConnectionPool && self::$connectionPool) {
             self::$connectionPool->addConnection($host, $port, $connection);
         }
         
-        // SSL 上下文
-        if ($scheme === 'https') {
+        // SSL 上下文（仅对新连接）
+        if (!$reusedConnection && $scheme === 'https') {
             $connection->transport = 'ssl';
             $connection->context = [
                 'ssl' => [
@@ -174,16 +181,23 @@ class AsyncHttpClient
         $responseHeaders = [];
         $statusCode = 0;
         $headersParsed = false;
+        $expectedLength = null;
+        $responseComplete = false;
         
-        // 连接成功
+        // 连接成功后发送请求
         $connection->onConnect = function($connection) use ($request) {
             $connection->send($request);
         };
         
         // 接收数据
-        $connection->onMessage = function($connection, $data) use (&$responseData, &$responseHeaders, &$statusCode, &$headersParsed) {
+        $connection->onMessage = function($connection, $data) use (
+            &$responseData, &$responseHeaders, &$statusCode, &$headersParsed, 
+            &$expectedLength, &$responseComplete, $future, $url, $method, 
+            $redirectCount, $host, $port
+        ) {
             $responseData .= $data;
             
+            // 解析响应头
             if (!$headersParsed && strpos($responseData, "\r\n\r\n") !== false) {
                 list($headersPart, $bodyPart) = explode("\r\n\r\n", $responseData, 2);
                 $responseData = $bodyPart;
@@ -202,12 +216,81 @@ class AsyncHttpClient
                     }
                 }
                 
+                // 获取预期的响应体长度
+                if (isset($responseHeaders['Content-Length'])) {
+                    $expectedLength = (int)$responseHeaders['Content-Length'];
+                }
+                
                 $headersParsed = true;
+            }
+            
+            // 检查响应是否完整
+            if ($headersParsed && !$responseComplete) {
+                if ($expectedLength !== null && strlen($responseData) >= $expectedLength) {
+                    $responseComplete = true;
+                    
+                    // 创建响应对象
+                    $response = new HttpResponse(
+                        $statusCode,
+                        $responseHeaders,
+                        $responseData
+                    );
+                    
+                    // 处理重定向
+                    if ($this->followRedirects && $redirectCount < $this->maxRedirects && in_array($statusCode, [301, 302, 303, 307, 308])) {
+                        if (isset($responseHeaders['Location'])) {
+                            $redirectUrl = $responseHeaders['Location'];
+                            
+                            // 处理相对URL
+                            if (!parse_url($redirectUrl, PHP_URL_SCHEME)) {
+                                $urlParts = parse_url($url);
+                                $scheme = $urlParts['scheme'] ?? 'http';
+                                $redirectHost = $urlParts['host'];
+                                $redirectPort = $urlParts['port'] ?? ($scheme === 'https' ? 443 : 80);
+                                $portSuffix = (($scheme === 'http' && $redirectPort == 80) || ($scheme === 'https' && $redirectPort == 443)) ? '' : ":{$redirectPort}";
+                                
+                                if (strpos($redirectUrl, '/') === 0) {
+                                    $redirectUrl = "{$scheme}://{$redirectHost}{$portSuffix}{$redirectUrl}";
+                                } else {
+                                    $path = $urlParts['path'] ?? '/';
+                                    $basePath = dirname($path);
+                                    $redirectUrl = "{$scheme}://{$redirectHost}{$portSuffix}{$basePath}/{$redirectUrl}";
+                                }
+                            }
+                            
+                            // 释放连接回连接池
+                            if ($this->useConnectionPool && self::$connectionPool) {
+                                self::$connectionPool->releaseConnection($host, $port, $connection);
+                            }
+                            
+                            // 递归请求重定向URL
+                            $this->request($redirectUrl, $method, null, [], $redirectCount + 1, $future);
+                            return;
+                        }
+                    }
+                    
+                    // 释放连接回连接池（Keep-Alive）
+                    if ($this->useConnectionPool && self::$connectionPool) {
+                        self::$connectionPool->releaseConnection($host, $port, $connection);
+                    }
+                    
+                    // 设置 Future 结果
+                    $future->setResult($response);
+                }
             }
         };
         
-        // 连接关闭
-        $connection->onClose = function($connection) use ($future, &$responseData, &$responseHeaders, &$statusCode, $url, $method, $redirectCount) {
+        // 连接关闭（兜底处理，如果服务器不支持 Keep-Alive 或响应没有 Content-Length）
+        $connection->onClose = function($connection) use (
+            $future, &$responseData, &$responseHeaders, &$statusCode, 
+            $url, $method, $redirectCount, &$responseComplete
+        ) {
+            // 如果响应已经在 onMessage 中处理完成，则忽略 onClose
+            if ($responseComplete) {
+                return;
+            }
+            
+            // 兜底：响应未完成，服务器关闭了连接（可能是没有 Content-Length 的响应）
             $response = new HttpResponse(
                 $statusCode,
                 $responseHeaders,
