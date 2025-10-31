@@ -628,3 +628,6 @@ set_slow_task_threshold(2.0);
 **版本:** 2.0.2  
 **更新日期:** 2025-01-20  
 **PHP 要求:** >= 8.1
+
+## Stargazers over time
+[![Stargazers over time](https://starchart.cc/pfinalclub/pfinal-asyncio.svg?variant=adaptive)](https://starchart.cc/pfinalclub/pfinal-asyncio)
