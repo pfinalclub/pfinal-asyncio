@@ -822,3 +822,6 @@ set_slow_task_threshold(2.0);
 **更新日期:** 2025-01-21  
 **PHP 要求:** >= 8.1  
 **可选扩展:** Redis (用于 Redis 连接池)
+
+## Stargazers over time
+[![Stargazers over time](https://starchart.cc/pfinalclub/pfinal-asyncio.svg?variant=adaptive)](https://starchart.cc/pfinalclub/pfinal-asyncio)
