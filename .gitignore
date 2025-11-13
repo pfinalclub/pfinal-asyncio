@@ -5,3 +5,9 @@
 .DS_Store
 /.idea/
 /.vscode/
+RELEASE_*.md
+UPGRADE_*.md
+P0_*.md
+P1_*.md
+CODE_*.md
+WORKERMAN_*.md

@@ -91,17 +91,17 @@ class AsyncioMonitor
             ],
             'performance' => PerformanceMonitor::getInstance()->getMetrics(),
             'slow_tasks' => PerformanceMonitor::getInstance()->getSlowTasks(),
-            'connection_pool' => $this->getConnectionPoolStats(),
+            'connection_manager' => $this->getConnectionManagerStats(),
         ];
     }
     
     /**
-     * 获取连接池统计信息
+     * 获取连接管理器统计信息
      */
-    private function getConnectionPoolStats(): array
+    private function getConnectionManagerStats(): array
     {
-        $pool = AsyncHttpClient::getConnectionPool();
-        return $pool ? $pool->getStats() : [];
+        $manager = AsyncHttpClient::getConnectionManager();
+        return $manager ? $manager->getStats() : [];
     }
     
     /**

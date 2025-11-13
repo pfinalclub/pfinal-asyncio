@@ -83,10 +83,8 @@ class Semaphore
         ];
         
         // 等待被唤醒
+        // 注意：被唤醒后不需要减少 count，因为 release() 已经直接转移了许可
         \PfinalClub\Asyncio\await_future($future);
-        
-        // 被唤醒后，减少计数
-        $this->count--;
     }
     
     /**

@@ -67,9 +67,9 @@ run(function() {
         echo "  错误: {$e->getMessage()}\n";
     }
     
-    // 连接池统计
-    echo "\n【连接池统计】\n";
-    $stats = $client->getConnectionPoolStats();
+    // 连接管理器统计
+    echo "\n【连接管理器统计】\n";
+    $stats = $client->getConnectionManagerStats();
     foreach ($stats as $host => $stat) {
         echo "  {$host}: 总计{$stat['total']}, 使用中{$stat['in_use']}, 可用{$stat['available']}\n";
     }

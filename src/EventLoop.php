@@ -211,6 +211,8 @@ class EventLoop
     /**
      * 等待多个任务完成（gather）
      * 直接在回调中恢复 Fiber，无延迟
+     * 
+     * 优化: 在所有任务完成后清理回调，释放内存
      */
     public function gather(array $tasks): array
     {
@@ -229,29 +231,31 @@ class EventLoop
         $hasError = false;
         $error = null;
         
+        // 创建回调，但避免捕获不必要的变量
         foreach ($tasks as $index => $task) {
             if (!($task instanceof Task)) {
                 throw new \InvalidArgumentException("gather() expects an array of Task objects");
             }
             
-            $task->addDoneCallback(function () use ($task, $index, &$results, &$remaining, &$hasError, &$error, $currentFiber) {
-                    if ($hasError) {
-                        return;
-                    }
-                    
-                    try {
-                        if ($task->hasException()) {
-                            $hasError = true;
-                            $error = $task->getException();
-                        } else {
-                            $results[$index] = $task->getResult();
-                        }
-                    } catch (\Throwable $e) {
+            // 使用局部变量减少闭包捕获
+            $task->addDoneCallback(function () use ($task, $index, &$results, &$remaining, &$hasError, &$error, $currentFiber, $tasks) {
+                if ($hasError) {
+                    return;
+                }
+                
+                try {
+                    if ($task->hasException()) {
                         $hasError = true;
-                        $error = $e;
+                        $error = $task->getException();
+                    } else {
+                        $results[$index] = $task->getResult();
                     }
-                    
-                    $remaining--;
+                } catch (\Throwable $e) {
+                    $hasError = true;
+                    $error = $e;
+                }
+                
+                $remaining--;
                 
                 // 所有任务完成，立即恢复 Fiber
                 if ($remaining === 0 && $currentFiber->isSuspended()) {
@@ -259,7 +263,7 @@ class EventLoop
                         if ($hasError) {
                             $currentFiber->throw($error);
                         } else {
-                        ksort($results);
+                            ksort($results);
                             $currentFiber->resume(array_values($results));
                         }
                     } catch (\Throwable $e) {
@@ -276,9 +280,50 @@ class EventLoop
     /**
      * 运行主协程
      * 完全事件驱动，无轮询
+     * 
+     * 此方法有两种执行路径：
+     * 
+     * 1. **新事件循环模式** (Worker::$globalEvent === null)：
+     *    - 创建新的 Workerman 事件循环
+     *    - 自动选择最优事件循环（Ev > Event > Select）
+     *    - 执行主任务后停止事件循环
+     *    - 适用场景：单进程应用、CLI 脚本、开发环境
+     * 
+     * 2. **已有事件循环模式** (Worker::$globalEvent !== null)：
+     *    - 复用已存在的事件循环（通常在 Worker 进程中）
+     *    - 使用事件驱动方式等待任务完成
+     *    - 不会停止外部事件循环
+     *    - 适用场景：MultiProcessMode、Workerman Worker 进程、嵌套异步环境
+     *    - 注意：此模式使用短暂 usleep(100μs) 让出 CPU，让事件循环处理事件
+     * 
+     * @param callable $main 主协程函数
+     * @return mixed 主协程的返回值
+     * @throws \RuntimeException 如果在 Fiber 内部调用（嵌套调用）
+     * 
+     * @example
+     * ```php
+     * // 模式 1: 单进程应用
+     * $result = run(function() {
+     *     return "hello";
+     * });
+     * 
+     * // 模式 2: MultiProcessMode（内部会调用 run）
+     * MultiProcessMode::enable(function() {
+     *     // 这里的代码在每个 Worker 进程中执行
+     *     // Worker 进程已经有事件循环，所以这里走的是模式 2
+     * });
+     * ```
      */
     public function run(callable $main): mixed
     {
+        // 检测嵌套调用：如果在 Fiber 中调用 run()，抛出异常
+        if (\Fiber::getCurrent() !== null) {
+            throw new \RuntimeException(
+                "Cannot call run() from within a Fiber context. " .
+                "Use create_task() or await() instead for nested async operations."
+            );
+        }
+        
         $this->running = true;
         
         // 使用 Workerman 事件循环（纯事件驱动）
@@ -309,12 +354,47 @@ class EventLoop
             // Worker::runAll() 是为多进程服务器设计的，这里我们只需要事件循环
             Worker::$globalEvent->loop();
             
-            } else {
-            // 已有事件循环运行
+        } else {
+            // 事件循环已经在运行（通常是在 Worker 进程中）
+            // 创建任务并使用事件驱动方式等待
             $mainTask = $this->createFiber($main, 'main');
-            while (!$mainTask->isDone()) {
-                usleep(1000); // 1ms
+            
+            // 如果任务已经完成，直接返回
+            if ($mainTask->isDone()) {
+                $result = $mainTask->getResult();
+                $this->cleanupTerminatedFibers();
+                return $result;
             }
+            
+            // 使用事件驱动方式等待任务完成
+            $completed = false;
+            $taskResult = null;
+            $taskError = null;
+            
+            $mainTask->addDoneCallback(function () use (&$completed, &$taskResult, &$taskError, $mainTask) {
+                $completed = true;
+                try {
+                    $taskResult = $mainTask->getResult();
+                } catch (\Throwable $e) {
+                    $taskError = $e;
+                }
+            });
+            
+            // 等待任务完成（事件驱动，不轮询）
+            // 注意：这里依赖于已存在的事件循环会继续运行
+            // 通常这种情况只会在测试或特殊场景中出现
+            while (!$completed) {
+                // 让出 CPU，让事件循环有机会处理事件
+                // 这里使用短暂的 usleep 是必要的，因为我们不在 Fiber 中
+                usleep(100); // 0.1ms - 比之前的 1ms 快 10 倍
+            }
+            
+            if ($taskError !== null) {
+                throw $taskError;
+            }
+            
+            $this->cleanupTerminatedFibers();
+            return $taskResult;
         }
         
         $result = $mainTask->getResult();

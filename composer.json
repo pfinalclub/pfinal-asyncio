@@ -22,13 +22,18 @@
             "PfinalClub\\Asyncio\\": "src/",
             "PfinalClub\\Asyncio\\Http\\": "src/Http/",
             "PfinalClub\\Asyncio\\Monitor\\": "src/Monitor/",
-            "PfinalClub\\Asyncio\\Debug\\": "src/Debug/"
+            "PfinalClub\\Asyncio\\Debug\\": "src/Debug/",
+            "PfinalClub\\Asyncio\\Production\\": "src/Production/",
+            "PfinalClub\\Asyncio\\Database\\": "src/Database/",
+            "PfinalClub\\Asyncio\\Cache\\": "src/Cache/"
         },
         "files": [
             "src/functions.php",
             "src/Http/functions.php",
             "src/Monitor/functions.php",
-            "src/Production/functions.php"
+            "src/Production/functions.php",
+            "src/Database/functions.php",
+            "src/Cache/functions.php"
         ]
     },
   "autoload-dev": {

@@ -81,9 +81,9 @@ $client = new AsyncHttpClient([
     'timeout' => 5,
 ]);
 
-$poolStats = $client->getConnectionPoolStats();
-echo "连接池初始化: " . (is_array($poolStats) ? "✅ 成功" : "❌ 失败") . "\n";
-echo "连接池端点数: " . count($poolStats) . "\n";
+$managerStats = $client->getConnectionManagerStats();
+echo "连接管理器初始化: " . (is_array($managerStats) ? "✅ 成功" : "❌ 失败") . "\n";
+echo "连接管理器端点数: " . count($managerStats) . "\n";
 echo "\n";
 
 // 测试 5: Prometheus 导出

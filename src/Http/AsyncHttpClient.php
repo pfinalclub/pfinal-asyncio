@@ -16,8 +16,8 @@ class AsyncHttpClient
     private int $timeout = 30;
     private bool $followRedirects = true;
     private int $maxRedirects = 5;
-    private static ?ConnectionPool $connectionPool = null;
-    private bool $useConnectionPool = true;
+    private static ?ConnectionManager $connectionManager = null;
+    private bool $useConnectionManager = true;
     
     public function __construct(array $options = [])
     {
@@ -30,11 +30,11 @@ class AsyncHttpClient
         $this->timeout = $options['timeout'] ?? 30;
         $this->followRedirects = $options['follow_redirects'] ?? true;
         $this->maxRedirects = $options['max_redirects'] ?? 5;
-        $this->useConnectionPool = $options['use_connection_pool'] ?? true;
+        $this->useConnectionManager = $options['use_connection_manager'] ?? true;
         
-        // 初始化全局连接池
-        if (self::$connectionPool === null && $this->useConnectionPool) {
-            self::$connectionPool = new ConnectionPool([
+        // 初始化全局连接管理器
+        if (self::$connectionManager === null && $this->useConnectionManager) {
+            self::$connectionManager = new ConnectionManager([
                 'max_connections' => $options['pool_max_connections'] ?? 10,
                 'connection_timeout' => $options['pool_connection_timeout'] ?? 60.0,
                 'idle_timeout' => $options['pool_idle_timeout'] ?? 30.0,
@@ -75,19 +75,28 @@ class AsyncHttpClient
     }
     
     /**
-     * 获取连接池实例
+     * 获取连接管理器实例
      */
-    public static function getConnectionPool(): ?ConnectionPool
+    public static function getConnectionManager(): ?ConnectionManager
     {
-        return self::$connectionPool;
+        return self::$connectionManager;
     }
     
     /**
-     * 获取连接池统计信息
+     * 获取连接管理器统计信息
+     */
+    public function getConnectionManagerStats(): array
+    {
+        return self::$connectionManager ? self::$connectionManager->getStats() : [];
+    }
+    
+    /**
+     * 获取连接池统计信息（向后兼容）
+     * @deprecated 使用 getConnectionManagerStats() 代替
      */
     public function getConnectionPoolStats(): array
     {
-        return self::$connectionPool ? self::$connectionPool->getStats() : [];
+        return $this->getConnectionManagerStats();
     }
     
     /**
@@ -161,9 +170,9 @@ class AsyncHttpClient
         $connection = new AsyncTcpConnection($address);
         $reusedConnection = false;
         
-        // 添加到连接池统计
-        if ($this->useConnectionPool && self::$connectionPool) {
-            self::$connectionPool->addConnection($host, $port, $connection);
+        // 添加到连接管理器统计
+        if ($this->useConnectionManager && self::$connectionManager) {
+            self::$connectionManager->addConnection($host, $port, $connection);
         }
         
         // SSL 上下文（仅对新连接）
@@ -258,9 +267,9 @@ class AsyncHttpClient
                                 }
                             }
                             
-                            // 释放连接回连接池
-                            if ($this->useConnectionPool && self::$connectionPool) {
-                                self::$connectionPool->releaseConnection($host, $port, $connection);
+                            // 释放连接回连接管理器
+                            if ($this->useConnectionManager && self::$connectionManager) {
+                                self::$connectionManager->releaseConnection($host, $port, $connection);
                             }
                             
                             // 递归请求重定向URL
@@ -269,9 +278,9 @@ class AsyncHttpClient
                         }
                     }
                     
-                    // 释放连接回连接池（Keep-Alive）
-                    if ($this->useConnectionPool && self::$connectionPool) {
-                        self::$connectionPool->releaseConnection($host, $port, $connection);
+                    // 释放连接回连接管理器（Keep-Alive）
+                    if ($this->useConnectionManager && self::$connectionManager) {
+                        self::$connectionManager->releaseConnection($host, $port, $connection);
                     }
                     
                     // 设置 Future 结果

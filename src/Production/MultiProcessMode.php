@@ -11,7 +11,7 @@ use PfinalClub\Asyncio\EventLoop;
  */
 class MultiProcessMode
 {
-    private static ?callable $mainCallback = null;
+    private static $mainCallback = null;  // callable|null - PHP <8.2 不支持 callable 作为属性类型
     private static int $workerCount = 0;
     private static array $config = [];
     
@@ -26,9 +26,20 @@ class MultiProcessMode
      *   - log_file: 日志文件路径（默认：./asyncio.log）
      *   - pid_file: PID 文件路径（默认：./asyncio.pid）
      *   - stdout_file: 标准输出文件（默认：/dev/null）
+     * 
+     * @throws \RuntimeException 如果事件循环已经初始化（与 EventLoop::run() 冲突）
      */
     public static function enable(callable $callback, array $config = []): void
     {
+        // 检测与 EventLoop::run() 的冲突
+        if (\Workerman\Worker::$globalEvent !== null) {
+            throw new \RuntimeException(
+                "Cannot enable MultiProcessMode: EventLoop is already initialized. " .
+                "MultiProcessMode must be enabled BEFORE calling run(). " .
+                "Both MultiProcessMode and EventLoop::run() initialize Workerman's event loop, causing conflicts."
+            );
+        }
+        
         // 保存回调和配置
         self::$mainCallback = $callback;
         self::$config = $config;
