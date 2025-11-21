@@ -77,6 +77,11 @@ function gather(Task ...$tasks): array
  * 等待任务完成，带超时
  * 类似 asyncio.wait_for()
  * 
+ * 改进：
+ * - 修复 Timer 资源泄漏问题
+ * - 确保在所有情况下都清理 Timer
+ * - 保留原始异常链
+ * 
  * @param callable|Task $awaitable 可调用对象或任务
  * @param float $timeout 超时时间（秒）
  * @return mixed 任务的返回值
@@ -87,29 +92,52 @@ function wait_for(callable|Task $awaitable, float $timeout): mixed
     $task = $awaitable instanceof Task ? $awaitable : create_task($awaitable);
     $timedOut = false;
     $timerId = null;
+    $cleanupDone = false;
+    
+    // 封装清理逻辑，确保只执行一次
+    $cleanup = function() use (&$timerId, &$cleanupDone) {
+        if ($cleanupDone) {
+            return;
+        }
+        $cleanupDone = true;
+        
+        if ($timerId !== null) {
+            try {
+                Timer::del($timerId);
+            } catch (\Throwable $e) {
+                // Timer 可能已经被删除或不存在
+                error_log("Warning: Failed to delete timer {$timerId}: " . $e->getMessage());
+            }
+            $timerId = null;
+        }
+    };
     
     // 设置超时定时器
-    $timerId = Timer::add($timeout, function () use ($task, &$timedOut, &$timerId) {
+    $timerId = Timer::add($timeout, function () use ($task, &$timedOut, $cleanup) {
         $timedOut = true;
         $task->cancel();
-        if ($timerId) {
-            Timer::del($timerId);
-        }
+        $cleanup();
     }, [], false);
     
     try {
         $result = await($task);
-        
-        // 取消超时定时器
-        if ($timerId && !$timedOut) {
-            Timer::del($timerId);
-        }
-        
+        $cleanup();  // 成功时清理
         return $result;
+        
     } catch (TaskCancelledException $e) {
+        $cleanup();  // 取消时清理
+        
         if ($timedOut) {
-            throw new TimeoutException("Task timed out after {$timeout} seconds");
+            throw new TimeoutException(
+                "Task timed out after {$timeout} seconds",
+                0,
+                $e  // 保留原始异常链
+            );
         }
+        throw $e;
+        
+    } catch (\Throwable $e) {
+        $cleanup();  // 任何异常都清理
         throw $e;
     }
 }
@@ -269,4 +297,67 @@ function spawn(callable $callback, string $name = ''): Task
 function semaphore(int $max): Semaphore
 {
     return new Semaphore($max);
+}
+
+/**
+ * 设置协程上下文变量
+ * 
+ * @param string $key 键名
+ * @param mixed $value 值
+ */
+function set_context(string $key, mixed $value): void
+{
+    Context::set($key, $value);
+}
+
+/**
+ * 获取协程上下文变量
+ * 
+ * @param string $key 键名
+ * @param mixed $default 默认值
+ * @return mixed
+ */
+function get_context(string $key, mixed $default = null): mixed
+{
+    return Context::get($key, $default);
+}
+
+/**
+ * 检查协程上下文变量是否存在
+ * 
+ * @param string $key 键名
+ * @return bool
+ */
+function has_context(string $key): bool
+{
+    return Context::has($key);
+}
+
+/**
+ * 删除协程上下文变量
+ * 
+ * @param string $key 键名
+ */
+function delete_context(string $key): void
+{
+    Context::delete($key);
+}
+
+/**
+ * 获取所有协程上下文
+ * 
+ * @param bool $includeParent 是否包含父协程上下文
+ * @return array
+ */
+function get_all_context(bool $includeParent = true): array
+{
+    return Context::getAll($includeParent);
+}
+
+/**
+ * 清理当前协程的所有上下文
+ */
+function clear_context(): void
+{
+    Context::clear();
 }

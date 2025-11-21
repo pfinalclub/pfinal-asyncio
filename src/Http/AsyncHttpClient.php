@@ -18,6 +18,7 @@ class AsyncHttpClient
     private int $maxRedirects = 5;
     private static ?ConnectionManager $connectionManager = null;
     private bool $useConnectionManager = true;
+    private ?RetryPolicy $retryPolicy = null;
     
     public function __construct(array $options = [])
     {
@@ -39,6 +40,15 @@ class AsyncHttpClient
                 'connection_timeout' => $options['pool_connection_timeout'] ?? 60.0,
                 'idle_timeout' => $options['pool_idle_timeout'] ?? 30.0,
             ]);
+        }
+        
+        // 配置重试策略
+        if (isset($options['retry_policy'])) {
+            $this->retryPolicy = $options['retry_policy'];
+        } elseif ($options['enable_retry'] ?? false) {
+            $this->retryPolicy = new RetryPolicy(
+                maxRetries: $options['max_retries'] ?? 3
+            );
         }
     }
     
@@ -100,11 +110,59 @@ class AsyncHttpClient
     }
     
     /**
-     * 发送 HTTP 请求
+     * 发送 HTTP 请求（带重试支持）
      * 
      * 注意：此方法会暂停当前 Fiber 直到请求完成
      */
     public function request(string $method, string $url, $data = null, array $headers = [], int $redirectCount = 0): HttpResponse
+    {
+        // 如果没有启用重试，直接执行请求
+        if ($this->retryPolicy === null) {
+            return $this->doRequest($method, $url, $data, $headers, $redirectCount);
+        }
+        
+        $attempt = 0;
+        $lastException = null;
+        $lastResponse = null;
+        
+        while (true) {
+            $attempt++;
+            
+            try {
+                $response = $this->doRequest($method, $url, $data, $headers, $redirectCount);
+                $lastResponse = $response;
+                
+                // 检查状态码是否需要重试
+                if (!$this->retryPolicy->shouldRetry($attempt, null, $response->getStatusCode())) {
+                    return $response;
+                }
+                
+                // 需要重试
+                $delay = $this->retryPolicy->getRetryDelay($attempt, $response);
+                error_log("[HTTP Retry] Retrying {$method} {$url} after {$delay}s due to status {$response->getStatusCode()} (attempt {$attempt})");
+                \PfinalClub\Asyncio\sleep($delay);
+                
+            } catch (\Throwable $e) {
+                $lastException = $e;
+                
+                if (!$this->retryPolicy->shouldRetry($attempt, $e)) {
+                    throw $e;
+                }
+                
+                // 需要重试
+                $delay = $this->retryPolicy->getRetryDelay($attempt, $lastResponse);
+                error_log("[HTTP Retry] Retrying {$method} {$url} after {$delay}s due to error: {$e->getMessage()} (attempt {$attempt})");
+                \PfinalClub\Asyncio\sleep($delay);
+            }
+        }
+    }
+    
+    /**
+     * 实际执行 HTTP 请求（不含重试逻辑）
+     * 
+     * @internal
+     */
+    private function doRequest(string $method, string $url, $data = null, array $headers = [], int $redirectCount = 0): HttpResponse
     {
         $currentFiber = \Fiber::getCurrent();
         

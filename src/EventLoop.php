@@ -212,7 +212,15 @@ class EventLoop
      * 等待多个任务完成（gather）
      * 直接在回调中恢复 Fiber，无延迟
      * 
-     * 优化: 在所有任务完成后清理回调，释放内存
+     * 改进:
+     * - 收集所有异常，不只是第一个
+     * - 抛出 GatherException 包含详细错误信息
+     * - 在所有任务完成后清理回调，释放内存
+     * - 保留成功任务的结果
+     * 
+     * @param array $tasks 任务数组
+     * @return array 所有任务的结果数组
+     * @throws GatherException 如果有任务失败
      */
     public function gather(array $tasks): array
     {
@@ -227,32 +235,29 @@ class EventLoop
         }
         
         $results = [];
+        $exceptions = [];
+        $taskNames = [];
         $remaining = count($tasks);
-        $hasError = false;
-        $error = null;
         
-        // 创建回调，但避免捕获不必要的变量
+        // 创建回调，收集所有结果和异常
         foreach ($tasks as $index => $task) {
             if (!($task instanceof Task)) {
                 throw new \InvalidArgumentException("gather() expects an array of Task objects");
             }
             
+            // 记录任务名称
+            $taskNames[$index] = $task->getName();
+            
             // 使用局部变量减少闭包捕获
-            $task->addDoneCallback(function () use ($task, $index, &$results, &$remaining, &$hasError, &$error, $currentFiber, $tasks) {
-                if ($hasError) {
-                    return;
-                }
-                
+            $task->addDoneCallback(function () use ($task, $index, &$results, &$exceptions, &$remaining, $currentFiber) {
                 try {
                     if ($task->hasException()) {
-                        $hasError = true;
-                        $error = $task->getException();
+                        $exceptions[$index] = $task->getException();
                     } else {
                         $results[$index] = $task->getResult();
                     }
                 } catch (\Throwable $e) {
-                    $hasError = true;
-                    $error = $e;
+                    $exceptions[$index] = $e;
                 }
                 
                 $remaining--;
@@ -260,14 +265,21 @@ class EventLoop
                 // 所有任务完成，立即恢复 Fiber
                 if ($remaining === 0 && $currentFiber->isSuspended()) {
                     try {
-                        if ($hasError) {
-                            $currentFiber->throw($error);
+                        if (!empty($exceptions)) {
+                            // 抛出聚合异常，包含所有失败和成功的信息
+                            $currentFiber->throw(
+                                new GatherException($exceptions, $results, $taskNames ?? [])
+                            );
                         } else {
                             ksort($results);
                             $currentFiber->resume(array_values($results));
                         }
                     } catch (\Throwable $e) {
-                        error_log("Error resuming fiber in gather: " . $e->getMessage());
+                        // 记录严重错误，但不吞掉异常
+                        error_log("[CRITICAL] Error resuming fiber in gather: " . $e->getMessage());
+                        error_log("Stack trace: " . $e->getTraceAsString());
+                        // 重新抛出，确保错误不会被忽略
+                        throw $e;
                     }
                 }
             });

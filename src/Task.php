@@ -4,22 +4,29 @@ namespace PfinalClub\Asyncio;
 
 /**
  * 任务 - 对 Fiber 的封装
+ * 
+ * @template T
  */
 class Task
 {
     private mixed $callable;
     private int $id;
     private string $name;
-    private bool $done = false;
+    private TaskState $state;
     private mixed $result = null;
     private ?\Throwable $exception = null;
     private array $callbacks = [];
+    private float $createdAt;
+    private ?float $startedAt = null;
+    private ?float $completedAt = null;
     
     public function __construct(callable $callable, int $id, string $name)
     {
         $this->callable = $callable;
         $this->id = $id;
         $this->name = $name;
+        $this->state = TaskState::PENDING;
+        $this->createdAt = microtime(true);
     }
     
     public function getId(): int
@@ -39,38 +46,48 @@ class Task
     
     public function isDone(): bool
     {
-        return $this->done;
+        return $this->state->isTerminal();
     }
     
     public function setResult(mixed $result): void
     {
-        if ($this->done) {
-            throw new \RuntimeException("Task {$this->name} already done");
+        if ($this->state->isTerminal()) {
+            throw new \RuntimeException(
+                "Task {$this->name} already in terminal state: {$this->state->value}"
+            );
         }
         
         $this->result = $result;
-        $this->done = true;
+        $this->state = TaskState::COMPLETED;
+        $this->completedAt = microtime(true);
         $this->runCallbacks();
     }
     
     public function setException(\Throwable $exception): void
     {
-        if ($this->done) {
+        if ($this->state->isTerminal()) {
             throw new \RuntimeException(
-                "Cannot set exception on completed task '{$this->name}': Task already " . 
-                ($this->exception ? 'failed with ' . get_class($this->exception) : 'completed with result')
+                "Cannot set exception on task '{$this->name}' in terminal state: {$this->state->value}"
             );
         }
         
         $this->exception = $exception;
-        $this->done = true;
+        $this->state = $exception instanceof TaskCancelledException 
+            ? TaskState::CANCELLED 
+            : TaskState::FAILED;
+        $this->completedAt = microtime(true);
         $this->runCallbacks();
     }
     
+    /**
+     * @return T
+     */
     public function getResult(): mixed
     {
-        if (!$this->done) {
-            throw new \RuntimeException("Task {$this->name} not done yet");
+        if (!$this->state->isTerminal()) {
+            throw new \RuntimeException(
+                "Task {$this->name} not completed yet (state: {$this->state->value})"
+            );
         }
         
         if ($this->exception) {
@@ -114,7 +131,7 @@ class Task
     
     public function cancel(): bool
     {
-        if ($this->done) {
+        if ($this->state->isTerminal()) {
             return false;
         }
         
@@ -122,9 +139,75 @@ class Task
         return true;
     }
     
+    /**
+     * 获取任务状态
+     */
+    public function getState(): TaskState
+    {
+        return $this->state;
+    }
+    
+    /**
+     * 标记任务开始运行
+     * 
+     * @internal 由 EventLoop 调用
+     */
+    public function markAsRunning(): void
+    {
+        if ($this->state === TaskState::PENDING) {
+            $this->state = TaskState::RUNNING;
+            $this->startedAt = microtime(true);
+        }
+    }
+    
+    /**
+     * 获取任务持续时间（秒）
+     */
+    public function getDuration(): ?float
+    {
+        if ($this->completedAt === null) {
+            // 任务未完成，返回当前已运行时间
+            if ($this->startedAt !== null) {
+                return microtime(true) - $this->startedAt;
+            }
+            return null;
+        }
+        
+        $start = $this->startedAt ?? $this->createdAt;
+        return $this->completedAt - $start;
+    }
+    
+    /**
+     * 获取任务等待时间（从创建到开始执行的时间）
+     */
+    public function getWaitTime(): ?float
+    {
+        if ($this->startedAt === null) {
+            return null;
+        }
+        return $this->startedAt - $this->createdAt;
+    }
+    
+    /**
+     * 获取任务统计信息
+     */
+    public function getStats(): array
+    {
+        return [
+            'id' => $this->id,
+            'name' => $this->name,
+            'state' => $this->state->value,
+            'created_at' => $this->createdAt,
+            'started_at' => $this->startedAt,
+            'completed_at' => $this->completedAt,
+            'wait_time' => $this->getWaitTime(),
+            'duration' => $this->getDuration(),
+            'has_exception' => $this->exception !== null,
+        ];
+    }
+    
     public function __toString(): string
     {
-        $status = $this->done ? 'done' : 'pending';
-        return "Task({$this->name}, {$status})";
+        return "Task({$this->name}, {$this->state->format()})";
     }
 }
