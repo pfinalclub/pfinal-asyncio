@@ -109,7 +109,7 @@ class Task
     
     public function addDoneCallback(callable $callback): void
     {
-        if ($this->done) {
+        if ($this->isDone()) {
             $callback($this);
         } else {
             $this->callbacks[] = $callback;
