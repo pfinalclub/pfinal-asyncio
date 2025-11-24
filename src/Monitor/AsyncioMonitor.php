@@ -3,7 +3,6 @@
 namespace PfinalClub\Asyncio\Monitor;
 
 use PfinalClub\Asyncio\EventLoop;
-use PfinalClub\Asyncio\Http\AsyncHttpClient;
 
 /**
  * Asyncio 监控器
@@ -97,11 +96,13 @@ class AsyncioMonitor
     
     /**
      * 获取连接管理器统计信息
+     * 
+     * @deprecated HTTP 模块已移除，请使用 pfinal/asyncio-http-core 包
      */
     private function getConnectionManagerStats(): array
     {
-        $manager = AsyncHttpClient::getConnectionManager();
-        return $manager ? $manager->getStats() : [];
+        // HTTP 模块已移到独立包
+        return [];
     }
     
     /**

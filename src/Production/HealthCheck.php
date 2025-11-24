@@ -4,7 +4,6 @@ namespace PfinalClub\Asyncio\Production;
 
 use PfinalClub\Asyncio\EventLoop;
 use PfinalClub\Asyncio\Monitor\{AsyncioMonitor, PerformanceMonitor};
-use PfinalClub\Asyncio\Http\AsyncHttpClient;
 
 /**
  * 健康检查

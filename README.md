@@ -29,20 +29,23 @@ High-performance asynchronous I/O library based on PHP Fiber and Workerman, prov
 - 📏 **ResourceLimits** - Memory and task limit enforcement
 - 📊 **AsyncIO Monitor** - Real-time monitoring of tasks, memory, and performance
 - 🐛 **AsyncIO Debugger** - Fiber call chain tracing and visualization
-- 🌐 **AsyncIO HTTP Client** - Full-featured async HTTP client (SSL, redirects, etc.)
 - 🔧 **Performance Monitor** - Task timing, slow task tracking, Prometheus export
 
-### Connection Pools *(v2.1.0)*
-- 🗄️ **Database Pool** - PDO connection pool with auto-management and heartbeat
-- 🔴 **Redis Pool** - Redis connection pool supporting all data types
-- ⚡ **True Connection Reuse** - Auto-management, heartbeat detection, and statistics
+### Extension Packages
+- 🌐 **AsyncIO HTTP Client** - `pfinal/asyncio-http-core` - Full-featured async HTTP client
+- 🗄️ **Database Pool** - `pfinal/asyncio-database` - PDO connection pool with heartbeat
+- 🔴 **Redis Pool** - `pfinal/asyncio-redis` - Redis connection pool for caching
 
 ### v2.2.0 New Features 🎉
 - 🔥 **GatherException** - Aggregate exception handling, never lose error information
 - 🧹 **Timer Auto-Cleanup** - Fix resource leaks in wait_for()
 - 🎯 **Context Management** - Coroutine context system (like Python contextvars)
-- 🔄 **HTTP Retry Policy** - Smart exponential backoff with jitter
 - 📊 **TaskState Enum** - Type-safe task state management
+
+### v3.0.0 Major Refactoring 🎊
+- 📦 **Modular Architecture** - HTTP, Database, Redis moved to separate packages
+- 🎯 **Core Focus** - Lightweight core with optional extensions
+- 🔌 **Better Separation** - Each package can evolve independently
 
 ## 📦 Installation
 
@@ -120,38 +123,27 @@ run(function() {
 });
 ```
 
-### HTTP Client with Retry *(v2.2.0)*
+## 📦 Extension Packages
 
-```php
-use PfinalClub\Asyncio\Http\AsyncHttpClient;
-use PfinalClub\Asyncio\Http\RetryPolicy;
-use function PfinalClub\Asyncio\{run, create_task, gather};
+For additional functionality, install these optional packages:
 
-run(function() {
-    // Create client with retry policy
-    $client = new AsyncHttpClient([
-        'retry_policy' => new RetryPolicy(
-            maxRetries: 3,
-            initialDelay: 0.1,
-            backoffMultiplier: 2.0
-        )
-    ]);
-    
-    $tasks = [];
-    $urls = ['https://api.example.com/1', 'https://api.example.com/2'];
-    
-    foreach ($urls as $url) {
-        $tasks[] = create_task(fn() => $client->get($url));
-    }
-    
-    $responses = gather(...$tasks);
-    
-    foreach ($responses as $response) {
-        echo "Status: {$response->getStatusCode()}\n";
-        echo "Body: {$response->getBody()}\n";
-    }
-});
+### HTTP Client
+```bash
+composer require pfinal/asyncio-http-core
 ```
+See [pfinal/asyncio-http-core](https://github.com/pfinal/asyncio-http-core) for documentation.
+
+### Database Connection Pool
+```bash
+composer require pfinal/asyncio-database
+```
+See [pfinal/asyncio-database](https://github.com/pfinal/asyncio-database) for documentation.
+
+### Redis Connection Pool
+```bash
+composer require pfinal/asyncio-redis
+```
+See [pfinal/asyncio-redis](https://github.com/pfinal/asyncio-redis) for documentation.
 
 ## 🎯 v2.2.0 Major Improvements
 
@@ -360,74 +352,12 @@ get_all_context(bool $includeParent = true): array
 clear_context(): void
 ```
 
-### HTTP Client
+### Extension Packages API
 
-```php
-$client = new AsyncHttpClient([
-    'timeout' => 30,
-    'follow_redirects' => true,
-    'max_redirects' => 5,
-    'retry_policy' => new RetryPolicy(...),  // v2.2.0
-]);
-
-$response = $client->get(string $url, array $headers = []);
-$response = $client->post(string $url, mixed $data = null, array $headers = []);
-$response = $client->put(string $url, mixed $data = null, array $headers = []);
-$response = $client->delete(string $url, array $headers = []);
-
-// Response methods
-$response->getStatusCode(): int
-$response->getHeaders(): array
-$response->getHeader(string $name): ?string
-$response->getBody(): string
-```
-
-### Database Pool *(v2.1.0)*
-
-```php
-// Initialize pool
-db_init([
-    'host' => '127.0.0.1',
-    'port' => 3306,
-    'dbname' => 'test',
-    'username' => 'root',
-    'password' => 'password'
-]);
-
-// Query
-$users = db_query('SELECT * FROM users WHERE age > ?', [18]);
-
-// Execute
-$affected = db_execute('UPDATE users SET status = ? WHERE id = ?', ['active', 1]);
-
-// Transaction
-db_transaction(function($pdo) {
-    $pdo->exec("INSERT INTO users ...");
-    $pdo->exec("UPDATE accounts ...");
-});
-```
-
-### Redis Pool *(v2.1.0)*
-
-```php
-// Initialize pool
-redis_init([
-    'host' => '127.0.0.1',
-    'port' => 6379,
-    'auth' => 'password',
-    'db' => 0
-]);
-
-// Cache functions
-cache_set('key', 'value', 3600);
-$value = cache_get('key');
-
-// Redis methods
-RedisPool::set('key', 'value');
-$value = RedisPool::get('key');
-RedisPool::hSet('hash', 'field', 'value');
-RedisPool::lPush('list', 'value');
-```
+For HTTP Client, Database Pool, and Redis Pool APIs, see the respective package documentation:
+- **HTTP Client**: [pfinal/asyncio-http-core](https://github.com/pfinal/asyncio-http-core)
+- **Database Pool**: [pfinal/asyncio-database](https://github.com/pfinal/asyncio-database)
+- **Redis Pool**: [pfinal/asyncio-redis](https://github.com/pfinal/asyncio-redis)
 
 ## ⚡ Performance
 
@@ -577,11 +507,18 @@ See `examples/` directory for complete examples:
 
 - `examples/01_hello_world.php` - Hello World
 - `examples/02_concurrent_tasks.php` - Concurrent tasks
-- `examples/03_http_client.php` - HTTP client
-- `examples/04_semaphore.php` - Concurrency control
-- `examples/14_database_pool.php` - Database pool
-- `examples/15_redis_pool.php` - Redis pool
-- `examples/16_improvements_demo.php` - v2.2.0 features
+- `examples/03_timeout_cancel.php` - Timeout and cancellation
+- `examples/05_error_handling.php` - Error handling
+- `examples/07_monitor_performance.php` - Performance monitoring
+- `examples/08_async_queue.php` - Async queue
+- `examples/09_semaphore_limit.php` - Concurrency control with semaphore
+- `examples/10_production_ready.php` - Production deployment
+- `examples/11_multiprocess_mode.php` - Multi-process mode
+
+For HTTP, Database, and Redis examples, see the extension packages:
+- [pfinal/asyncio-http-core](https://github.com/pfinal/asyncio-http-core) - HTTP client examples
+- [pfinal/asyncio-database](https://github.com/pfinal/asyncio-database) - Database pool examples
+- [pfinal/asyncio-redis](https://github.com/pfinal/asyncio-redis) - Redis pool examples
 
 ## 🔄 Migration Guide
 
@@ -621,6 +558,27 @@ $task->getState()->isTerminal()
 ```
 
 ## 📝 Changelog
+
+### v3.0.0 (2025-01-24) - Modular Architecture 🎊
+
+**Breaking Changes**:
+- ✅ HTTP Client moved to `pfinal/asyncio-http-core` package
+- ✅ Database Pool moved to `pfinal/asyncio-database` package
+- ✅ Redis Pool moved to `pfinal/asyncio-redis` package
+
+**Migration Guide**:
+```bash
+# Install extension packages as needed
+composer require pfinal/asyncio-http-core
+composer require pfinal/asyncio-database
+composer require pfinal/asyncio-redis
+```
+
+**Benefits**:
+- 📦 Lightweight core package
+- 🎯 Optional extensions
+- 🔌 Independent versioning
+- ✅ Better separation of concerns
 
 ### v2.2.0 (2025-01-21) - Production-Grade Improvements
 

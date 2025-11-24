@@ -23,11 +23,8 @@
         },
         "files": [
             "src/functions.php",
-            "src/Http/functions.php",
             "src/Monitor/functions.php",
-            "src/Production/functions.php",
-            "src/Database/functions.php",
-            "src/Cache/functions.php"
+            "src/Production/functions.php"
         ]
     },
   "autoload-dev": {
