@@ -19,13 +19,7 @@
   },
     "autoload": {
         "psr-4": {
-            "PfinalClub\\Asyncio\\": "src/",
-            "PfinalClub\\Asyncio\\Http\\": "src/Http/",
-            "PfinalClub\\Asyncio\\Monitor\\": "src/Monitor/",
-            "PfinalClub\\Asyncio\\Debug\\": "src/Debug/",
-            "PfinalClub\\Asyncio\\Production\\": "src/Production/",
-            "PfinalClub\\Asyncio\\Database\\": "src/Database/",
-            "PfinalClub\\Asyncio\\Cache\\": "src/Cache/"
+            "PfinalClub\\Asyncio\\": "src/"
         },
         "files": [
             "src/functions.php",
