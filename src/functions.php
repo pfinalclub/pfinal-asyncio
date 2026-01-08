@@ -3,6 +3,8 @@
 namespace PfinalClub\Asyncio;
 
 use Workerman\Timer;
+use PfinalClub\Asyncio\Core\EventLoop;
+use PfinalClub\Asyncio\Core\Task;
 
 /**
  * 辅助函数 - 提供类似 Python asyncio 的 API
@@ -12,15 +14,34 @@ use Workerman\Timer;
 /**
  * 创建并调度一个异步任务
  * 类似 asyncio.create_task()
+ * 
+ * @api-stable
+ * @throws \RuntimeException 如果没有活动的 CancellationScope
  */
 function create_task(callable $callback, string $name = ''): Task
 {
-    return EventLoop::getInstance()->createFiber($callback, $name);
+    $task = EventLoop::getInstance()->createFiber($callback, $name);
+    
+    // 获取当前活动的取消作用域
+    $scope = \PfinalClub\Asyncio\Concurrency\CancellationScope::current();
+    if ($scope === null) {
+        throw new \RuntimeException(
+            "No active CancellationScope. Use CancellationScope::run() to create a scope for tasks."
+        );
+    }
+    
+    // 注册任务到当前作用域
+    $scope->registerTask($task);
+    
+    return $task;
 }
 
 /**
  * 异步函数包装器（别名）
  * 创建新的 Fiber 任务
+ * 
+ * @deprecated Use create_task() instead
+ * @api-experimental
  */
 function async(callable $callback, string $name = ''): Task
 {
@@ -32,6 +53,7 @@ function async(callable $callback, string $name = ''): Task
  * 类似 asyncio.run()
  * 
  * @param callable $main 要运行的主函数
+ * @api-stable
  */
 function run(callable $main): mixed
 {
@@ -43,6 +65,7 @@ function run(callable $main): mixed
  * 类似 asyncio.sleep()
  * 
  * 注意：此函数必须在 Fiber 上下文中调用
+ * @api-stable
  */
 function sleep(float $seconds): void
 {
@@ -55,6 +78,7 @@ function sleep(float $seconds): void
  * 
  * @param Task $task 要等待的任务
  * @return mixed 任务的返回值
+ * @api-stable
  */
 function await(Task $task): mixed
 {
@@ -66,11 +90,19 @@ function await(Task $task): mixed
  * 类似 asyncio.gather()
  * 
  * @param Task ...$tasks 要等待的任务列表
+ * @param GatherStrategy $strategy 收集策略，默认为 FAIL_FAST
  * @return array 所有任务的返回值数组
+ * @api-stable
  */
 function gather(Task ...$tasks): array
 {
-    return EventLoop::getInstance()->gather($tasks);
+    // 从参数中提取策略，如果有的话
+    $strategy = GatherStrategy::FAIL_FAST;
+    if (!empty($tasks) && $tasks[count($tasks) - 1] instanceof GatherStrategy) {
+        $strategy = array_pop($tasks);
+    }
+    
+    return EventLoop::getInstance()->gather($tasks, $strategy);
 }
 
 /**
@@ -307,7 +339,7 @@ function semaphore(int $max): Semaphore
  */
 function set_context(string $key, mixed $value): void
 {
-    Context::set($key, $value);
+    \PfinalClub\Asyncio\Resource\Context::set($key, $value);
 }
 
 /**
@@ -319,7 +351,7 @@ function set_context(string $key, mixed $value): void
  */
 function get_context(string $key, mixed $default = null): mixed
 {
-    return Context::get($key, $default);
+    return \PfinalClub\Asyncio\Resource\Context::get($key, $default);
 }
 
 /**
@@ -330,7 +362,7 @@ function get_context(string $key, mixed $default = null): mixed
  */
 function has_context(string $key): bool
 {
-    return Context::has($key);
+    return \PfinalClub\Asyncio\Resource\Context::has($key);
 }
 
 /**
@@ -340,7 +372,7 @@ function has_context(string $key): bool
  */
 function delete_context(string $key): void
 {
-    Context::delete($key);
+    \PfinalClub\Asyncio\Resource\Context::delete($key);
 }
 
 /**
@@ -351,7 +383,7 @@ function delete_context(string $key): void
  */
 function get_all_context(bool $includeParent = true): array
 {
-    return Context::getAll($includeParent);
+    return \PfinalClub\Asyncio\Resource\Context::getAll($includeParent);
 }
 
 /**
@@ -359,5 +391,5 @@ function get_all_context(bool $includeParent = true): array
  */
 function clear_context(): void
 {
-    Context::clear();
+    \PfinalClub\Asyncio\Resource\Context::clear();
 }

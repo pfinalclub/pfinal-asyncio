@@ -2,7 +2,7 @@
 
 namespace PfinalClub\Asyncio\Production;
 
-use PfinalClub\Asyncio\EventLoop;
+use PfinalClub\Asyncio\Core\EventLoop;
 
 /**
  * 资源限制

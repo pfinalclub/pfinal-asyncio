@@ -1,6 +1,6 @@
 <?php
 
-namespace PfinalClub\Asyncio;
+namespace PfinalClub\Asyncio\Core;
 
 /**
  * 任务状态枚举
@@ -124,6 +124,24 @@ enum TaskState: string
     public function format(): string
     {
         return $this->getEmoji() . ' ' . $this->getDescription();
+    }
+    
+    /**
+     * 验证状态转换是否合法
+     * 
+     * @param TaskState $target 目标状态
+     * @return bool 是否可以转换到目标状态
+     */
+    public function canTransitionTo(TaskState $target): bool
+    {
+        // 使用 match 表达式更直观地定义状态转换规则
+        return match ($this) {
+            self::PENDING => $target === self::RUNNING || $target === self::CANCELLED || $target === self::FAILED,
+            self::RUNNING => $target === self::COMPLETED || $target === self::FAILED || $target === self::CANCELLED,
+            self::COMPLETED => false,
+            self::FAILED => false,
+            self::CANCELLED => false,
+        };
     }
 }
 

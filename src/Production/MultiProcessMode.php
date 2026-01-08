@@ -3,7 +3,7 @@
 namespace PfinalClub\Asyncio\Production;
 
 use Workerman\Worker;
-use PfinalClub\Asyncio\EventLoop;
+use PfinalClub\Asyncio\Core\EventLoop;
 
 /**
  * 多进程模式

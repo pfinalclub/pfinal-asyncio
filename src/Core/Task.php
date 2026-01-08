@@ -1,6 +1,9 @@
 <?php
 
-namespace PfinalClub\Asyncio;
+namespace PfinalClub\Asyncio\Core;
+
+use PfinalClub\Asyncio\TaskCancelledException;
+use PfinalClub\Asyncio\Concurrency\CancellationScope;
 
 /**
  * 任务 - 对 Fiber 的封装
@@ -13,6 +16,7 @@ class Task
     private int $id;
     private string $name;
     private TaskState $state;
+    private ?CancellationScope $scope = null;
     private mixed $result = null;
     private ?\Throwable $exception = null;
     private array $callbacks = [];
@@ -49,34 +53,60 @@ class Task
         return $this->state->isTerminal();
     }
     
-    public function setResult(mixed $result): void
+    /**
+     * 设置任务状态，验证转换合法性
+     * 
+     * @param TaskState $newState 新状态
+     * @throws \RuntimeException 如果状态转换不合法
+     */
+    private function setState(TaskState $newState): void
     {
-        if ($this->state->isTerminal()) {
+        if (!$this->state->canTransitionTo($newState)) {
             throw new \RuntimeException(
-                "Task {$this->name} already in terminal state: {$this->state->value}"
+                "Invalid state transition from {$this->state->value} to {$newState->value} for task {$this->name}"
             );
         }
-        
+        $this->state = $newState;
+    }
+    
+    public function setResult(mixed $result): void
+    {
         $this->result = $result;
-        $this->state = TaskState::COMPLETED;
+        $this->setState(TaskState::COMPLETED);
         $this->completedAt = microtime(true);
         $this->runCallbacks();
     }
     
     public function setException(\Throwable $exception): void
     {
-        if ($this->state->isTerminal()) {
-            throw new \RuntimeException(
-                "Cannot set exception on task '{$this->name}' in terminal state: {$this->state->value}"
-            );
-        }
-        
         $this->exception = $exception;
-        $this->state = $exception instanceof TaskCancelledException 
-            ? TaskState::CANCELLED 
-            : TaskState::FAILED;
+        $this->setState(
+            $exception instanceof TaskCancelledException 
+                ? TaskState::CANCELLED 
+                : TaskState::FAILED
+        );
         $this->completedAt = microtime(true);
         $this->runCallbacks();
+    }
+    
+    /**
+     * 设置任务的 CancellationScope
+     * 
+     * @param CancellationScope $scope
+     */
+    public function setScope(CancellationScope $scope): void
+    {
+        $this->scope = $scope;
+    }
+    
+    /**
+     * 获取任务的 CancellationScope
+     * 
+     * @return CancellationScope|null
+     */
+    public function getScope(): ?CancellationScope
+    {
+        return $this->scope;
     }
     
     /**
@@ -155,7 +185,7 @@ class Task
     public function markAsRunning(): void
     {
         if ($this->state === TaskState::PENDING) {
-            $this->state = TaskState::RUNNING;
+            $this->setState(TaskState::RUNNING);
             $this->startedAt = microtime(true);
         }
     }

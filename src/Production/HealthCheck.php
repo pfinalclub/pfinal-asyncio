@@ -2,8 +2,8 @@
 
 namespace PfinalClub\Asyncio\Production;
 
-use PfinalClub\Asyncio\EventLoop;
-use PfinalClub\Asyncio\Monitor\{AsyncioMonitor, PerformanceMonitor};
+use PfinalClub\Asyncio\Core\EventLoop;
+
 
 /**
  * 健康检查
@@ -82,18 +82,7 @@ class HealthCheck
             ];
         });
         
-        // 性能监控检查
-        $this->registerCheck('performance', function() {
-            $monitor = PerformanceMonitor::getInstance();
-            $slowTasks = $monitor->getSlowTasks();
-            
-            $status = count($slowTasks) > 10 ? 'warning' : 'ok';
-            
-            return [
-                'status' => $status,
-                'slow_tasks_count' => count($slowTasks),
-            ];
-        });
+
     }
     
     /**
@@ -159,13 +148,12 @@ class HealthCheck
      */
     private function generateSummary(): array
     {
-        $monitor = AsyncioMonitor::getInstance();
-        $snapshot = $monitor->snapshot();
+        $loop = EventLoop::getInstance();
+        $fibers = $loop->getActiveFibers();
         
         return [
-            'uptime_seconds' => $snapshot['uptime_seconds'],
-            'memory_mb' => $snapshot['memory']['current_mb'],
-            'active_fibers' => $snapshot['event_loop']['active_fibers'],
+            'active_fibers' => count($fibers),
+            'memory_mb' => round(memory_get_usage(true) / 1024 / 1024, 2),
         ];
     }
     

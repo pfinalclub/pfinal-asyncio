@@ -1,17 +1,19 @@
 <?php
 
-namespace PfinalClub\Asyncio;
+namespace PfinalClub\Asyncio\Core;
 
 use Fiber;
 use Workerman\Timer;
 use Workerman\Worker;
-use PfinalClub\Asyncio\Monitor\PerformanceMonitor;
+use PfinalClub\Asyncio\Core\Task;
+use PfinalClub\Asyncio\GatherException;
+
 
 /**
  * 事件循环 - 基于 Fiber 的异步调度器
  * 负责调度和执行异步任务
  */
-class EventLoop
+class EventLoop implements EventLoopInterface
 {
     private static ?EventLoop $instance = null;
     private array $fibers = [];
@@ -102,21 +104,24 @@ class EventLoop
         $fiberId = ++$this->fiberIdCounter;
         $task = new Task($callback, $fiberId, $name ?: "Fiber-{$fiberId}");
         
-        // 启动性能监控
-        $monitor = PerformanceMonitor::getInstance();
-        $monitor->startTask($fiberId, $task->getName());
-        
-        $fiber = new Fiber(function () use ($task, $callback, $fiberId, $monitor) {
+        $fiber = new Fiber(function () use ($task, $callback) {
             try {
                 $result = $callback();
                 $task->setResult($result);
             } catch (\Throwable $e) {
                 $task->setException($e);
-            } finally {
-                // 结束性能监控
-                $monitor->endTask($fiberId);
             }
         });
+        
+        // 获取当前 Fiber（父 Fiber）
+        $currentFiber = Fiber::getCurrent();
+        $parentFiberId = $currentFiber ? spl_object_id($currentFiber) : 0;
+        
+        // 获取新 Fiber 的实际 ID
+        $newFiberId = spl_object_id($fiber);
+        
+        // 设置父子 Fiber 关系，用于上下文继承
+        \PfinalClub\Asyncio\Resource\Context::setParent($newFiberId, $parentFiberId);
         
         $this->fibers[$fiberId] = [
             'fiber' => $fiber,
@@ -127,6 +132,8 @@ class EventLoop
         // 立即启动 Fiber
         if (!$fiber->isStarted()) {
             try {
+                // 标记任务为运行中
+                $task->markAsRunning();
                 $fiber->start();
             } catch (\Throwable $e) {
                 $task->setException($e);
@@ -213,16 +220,18 @@ class EventLoop
      * 直接在回调中恢复 Fiber，无延迟
      * 
      * 改进:
+     * - 支持不同的 gather 策略
      * - 收集所有异常，不只是第一个
      * - 抛出 GatherException 包含详细错误信息
      * - 在所有任务完成后清理回调，释放内存
      * - 保留成功任务的结果
      * 
      * @param array $tasks 任务数组
+     * @param \PfinalClub\Asyncio\Concurrency\GatherStrategy $strategy 收集策略
      * @return array 所有任务的结果数组
      * @throws GatherException 如果有任务失败
      */
-    public function gather(array $tasks): array
+    public function gather(array $tasks, \PfinalClub\Asyncio\Concurrency\GatherStrategy $strategy = \PfinalClub\Asyncio\Concurrency\GatherStrategy::FAIL_FAST): array
     {
         if (empty($tasks)) {
             return [];
@@ -238,6 +247,7 @@ class EventLoop
         $exceptions = [];
         $taskNames = [];
         $remaining = count($tasks);
+        $firstException = null;
         
         // 创建回调，收集所有结果和异常
         foreach ($tasks as $index => $task) {
@@ -249,10 +259,22 @@ class EventLoop
             $taskNames[$index] = $task->getName();
             
             // 使用局部变量减少闭包捕获
-            $task->addDoneCallback(function () use ($task, $index, &$results, &$exceptions, &$remaining, $currentFiber) {
+            $task->addDoneCallback(function () use ($task, $index, &$results, &$exceptions, &$remaining, $currentFiber, &$firstException, $tasks, $strategy) {
                 try {
                     if ($task->hasException()) {
                         $exceptions[$index] = $task->getException();
+                        
+                        // 快速失败策略 - 一旦有异常，立即取消所有其他任务
+                        if ($strategy === \PfinalClub\Asyncio\Concurrency\GatherStrategy::FAIL_FAST && $firstException === null) {
+                            $firstException = $task->getException();
+                            
+                            // 取消所有其他未完成的任务
+                            foreach ($tasks as $otherIndex => $otherTask) {
+                                if ($otherIndex !== $index && !$otherTask->isDone()) {
+                                    $otherTask->cancel();
+                                }
+                            }
+                        }
                     } else {
                         $results[$index] = $task->getResult();
                     }
@@ -266,10 +288,17 @@ class EventLoop
                 if ($remaining === 0 && $currentFiber->isSuspended()) {
                     try {
                         if (!empty($exceptions)) {
-                            // 抛出聚合异常，包含所有失败和成功的信息
-                            $currentFiber->throw(
-                                new GatherException($exceptions, $results, $taskNames ?? [])
-                            );
+                            // 根据策略处理异常
+                            if ($strategy === \PfinalClub\Asyncio\Concurrency\GatherStrategy::RETURN_PARTIAL) {
+                                // 返回部分结果，不抛出异常
+                                ksort($results);
+                                $currentFiber->resume(array_values($results));
+                            } else {
+                                // 抛出聚合异常，包含所有失败和成功的信息
+                                $currentFiber->throw(
+                                    new GatherException($exceptions, $results, $taskNames ?? [])
+                                );
+                            }
                         } else {
                             ksort($results);
                             $currentFiber->resume(array_values($results));

@@ -1,6 +1,8 @@
 <?php
 
-namespace PfinalClub\Asyncio;
+namespace PfinalClub\Asyncio\Resource;
+
+use PfinalClub\Asyncio\Core\EventLoop;
 
 /**
  * 协程上下文管理器
@@ -12,6 +14,8 @@ namespace PfinalClub\Asyncio;
  * - 协程隔离：每个 Fiber 有独立的上下文
  * - 自动清理：Fiber 终止时自动清理上下文
  * - 线程安全：使用 Fiber ID 作为隔离键
+ * - 定期清理：自动清理过期上下文
+ * - 延迟清理：优化清理性能
  * 
  * 典型用例：
  * - 请求追踪（Request ID）
@@ -56,6 +60,22 @@ class Context
     private static array $parentMap = [];
     
     /**
+     * 上次清理时间
+     * @var float|null
+     */
+    private static ?float $lastCleanupTime = null;
+    
+    /**
+     * 清理间隔（秒）
+     */
+    private const CLEANUP_INTERVAL = 5.0;
+    
+    /**
+     * 清理阈值（上下文数量）
+     */
+    private const CLEANUP_THRESHOLD = 1000;
+    
+    /**
      * 设置当前协程的上下文变量
      * 
      * @param string $key 键名
@@ -75,7 +95,7 @@ class Context
     /**
      * 获取当前协程的上下文变量
      * 
-     * 如果当前协程没有该键，会尝试从父协程继承
+     * 如果当前协程没有该键，会递归尝试从父协程继承
      * 
      * @param string $key 键名
      * @param mixed $default 默认值
@@ -90,12 +110,14 @@ class Context
             return self::$contexts[$fiberId][$key];
         }
         
-        // 尝试从父协程继承
-        if (isset(self::$parentMap[$fiberId])) {
-            $parentId = self::$parentMap[$fiberId];
+        // 递归查找父协程链
+        $currentId = $fiberId;
+        while (isset(self::$parentMap[$currentId])) {
+            $parentId = self::$parentMap[$currentId];
             if (isset(self::$contexts[$parentId][$key])) {
                 return self::$contexts[$parentId][$key];
             }
+            $currentId = $parentId;
         }
         
         return $default;
@@ -115,10 +137,14 @@ class Context
             return true;
         }
         
-        // 检查父协程
-        if (isset(self::$parentMap[$fiberId])) {
-            $parentId = self::$parentMap[$fiberId];
-            return isset(self::$contexts[$parentId][$key]);
+        // 递归检查父协程链
+        $currentId = $fiberId;
+        while (isset(self::$parentMap[$currentId])) {
+            $parentId = self::$parentMap[$currentId];
+            if (isset(self::$contexts[$parentId][$key])) {
+                return true;
+            }
+            $currentId = $parentId;
         }
         
         return false;
