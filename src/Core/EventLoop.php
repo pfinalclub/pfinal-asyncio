@@ -7,13 +7,17 @@ use Workerman\Timer;
 use Workerman\Worker;
 use PfinalClub\Asyncio\Core\Task;
 use PfinalClub\Asyncio\GatherException;
+use PfinalClub\Asyncio\Observable\Observable;
+use PfinalClub\Asyncio\Observable\Events\TaskEvent;
 
 
 /**
  * 事件循环 - 基于 Fiber 的异步调度器
  * 负责调度和执行异步任务
+ * 
+ * @internal 这是内部实现类，用户应通过 EventLoopInterface 操作
  */
-class EventLoop implements EventLoopInterface
+final class EventLoop implements EventLoopInterface
 {
     private static ?EventLoop $instance = null;
     private array $fibers = [];
@@ -132,6 +136,13 @@ class EventLoop implements EventLoopInterface
         // 立即启动 Fiber
         if (!$fiber->isStarted()) {
             try {
+                // 发送任务创建事件
+                if (Observable::getInstance()->isEnabled()) {
+                    Observable::getInstance()->emitTaskEvent(
+                        new TaskEvent(TaskEvent::CREATED, $task)
+                    );
+                }
+                
                 // 标记任务为运行中
                 $task->markAsRunning();
                 $fiber->start();
@@ -485,6 +496,9 @@ class EventLoop implements EventLoopInterface
     
     /**
      * 获取所有活跃的 Fiber
+     * 
+     * @internal 这是内部实现方法，仅供内部使用
+     * @return array Fiber 信息数组
      */
     public function getActiveFibers(): array
     {

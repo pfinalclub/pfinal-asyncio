@@ -4,6 +4,8 @@ namespace PfinalClub\Asyncio\Core;
 
 use PfinalClub\Asyncio\TaskCancelledException;
 use PfinalClub\Asyncio\Concurrency\CancellationScope;
+use PfinalClub\Asyncio\Observable\Observable;
+use PfinalClub\Asyncio\Observable\Events\TaskEvent;
 
 /**
  * 任务 - 对 Fiber 的封装
@@ -75,18 +77,50 @@ class Task
         $this->setState(TaskState::COMPLETED);
         $this->completedAt = microtime(true);
         $this->runCallbacks();
+        
+        // 开发模式：检测孤儿 Task（没有 Scope 的 Task）
+        if ($this->scope === null && (getenv('ASYNCIO_DEBUG') || defined('ASYNCIO_DEBUG'))) {
+            error_log(
+                "WARNING: Orphan Task detected - Task '{$this->name}' (#{$this->id}) completed without a CancellationScope. " .
+                "This may indicate a resource leak. Ensure all tasks are created within a CancellationScope::run() context."
+            );
+        }
+        
+        // 发送可观测性事件
+        if (Observable::getInstance()->isEnabled()) {
+            Observable::getInstance()->emitTaskEvent(
+                new TaskEvent(TaskEvent::COMPLETED, $this)
+            );
+        }
     }
     
     public function setException(\Throwable $exception): void
     {
         $this->exception = $exception;
+        $isCancelled = $exception instanceof TaskCancelledException;
         $this->setState(
-            $exception instanceof TaskCancelledException 
+            $isCancelled 
                 ? TaskState::CANCELLED 
                 : TaskState::FAILED
         );
         $this->completedAt = microtime(true);
         $this->runCallbacks();
+        
+        // 开发模式：检测孤儿 Task（没有 Scope 的 Task，但排除取消的 Task）
+        if (!$isCancelled && $this->scope === null && (getenv('ASYNCIO_DEBUG') || defined('ASYNCIO_DEBUG'))) {
+            error_log(
+                "WARNING: Orphan Task detected - Task '{$this->name}' (#{$this->id}) failed without a CancellationScope. " .
+                "This may indicate a resource leak. Ensure all tasks are created within a CancellationScope::run() context."
+            );
+        }
+        
+        // 发送可观测性事件
+        if (Observable::getInstance()->isEnabled()) {
+            $eventType = $isCancelled ? TaskEvent::CANCELLED : TaskEvent::FAILED;
+            Observable::getInstance()->emitTaskEvent(
+                new TaskEvent($eventType, $this, $exception)
+            );
+        }
     }
     
     /**
@@ -187,6 +221,13 @@ class Task
         if ($this->state === TaskState::PENDING) {
             $this->setState(TaskState::RUNNING);
             $this->startedAt = microtime(true);
+            
+            // 发送可观测性事件
+            if (Observable::getInstance()->isEnabled()) {
+                Observable::getInstance()->emitTaskEvent(
+                    new TaskEvent(TaskEvent::STARTED, $this)
+                );
+            }
         }
     }
     

@@ -28,8 +28,14 @@ class CancellationScope
         $scope->parent = self::$current;
         self::$current = $scope;
         
+        
+        
         try {
-            return $callback($scope);
+            $result = $callback($scope);
+            
+
+            
+            return $result;
         } finally {
             $scope->cancel();
             self::$current = $scope->parent;
@@ -58,6 +64,8 @@ class CancellationScope
         }
         
         $this->cancelled = true;
+        
+        
         
         // 取消所有注册的任务
         foreach ($this->tasks as $task) {

@@ -38,6 +38,8 @@ class AsyncResourceManager
         
         self::$resources[$scopeId][] = $resource;
         
+        
+        
         // 定期清理过期资源
         self::$cleanupCounter++;
         if (self::$cleanupCounter >= self::CLEANUP_THRESHOLD) {
@@ -94,6 +96,8 @@ class AsyncResourceManager
         foreach (self::$resources[$scopeId] as $resource) {
             try {
                 if (!$resource->isClosed()) {
+                    
+                    
                     $resource->close();
                 }
             } catch (\Throwable $e) {

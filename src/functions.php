@@ -5,9 +5,12 @@ namespace PfinalClub\Asyncio;
 use Workerman\Timer;
 use PfinalClub\Asyncio\Core\EventLoop;
 use PfinalClub\Asyncio\Core\Task;
+use PfinalClub\Asyncio\Concurrency\CancellationScope;
+use PfinalClub\Asyncio\Concurrency\GatherStrategy;
+use PfinalClub\Asyncio\GatherException;
 
 /**
- * 辅助函数 - 提供类似 Python asyncio 的 API
+ * 核心异步函数 - 提供类似 Python asyncio 的 API
  * 基于 Fiber 实现
  */
 
@@ -15,7 +18,13 @@ use PfinalClub\Asyncio\Core\Task;
  * 创建并调度一个异步任务
  * 类似 asyncio.create_task()
  * 
+ * 所有任务必须在一个 CancellationScope 中创建。
+ * run() 函数会自动创建 Scope，所以通常不需要手动创建。
+ * 
  * @api-stable
+ * @param callable $callback 要执行的回调函数
+ * @param string $name 任务名称（可选）
+ * @return Task 创建的任务对象
  * @throws \RuntimeException 如果没有活动的 CancellationScope
  */
 function create_task(callable $callback, string $name = ''): Task
@@ -37,27 +46,19 @@ function create_task(callable $callback, string $name = ''): Task
 }
 
 /**
- * 异步函数包装器（别名）
- * 创建新的 Fiber 任务
- * 
- * @deprecated Use create_task() instead
- * @api-experimental
- */
-function async(callable $callback, string $name = ''): Task
-{
-    return create_task($callback, $name);
-}
-
-/**
  * 运行主协程直到完成
  * 类似 asyncio.run()
+ * 
+ * 自动创建 CancellationScope，确保所有任务都有作用域管理
  * 
  * @param callable $main 要运行的主函数
  * @api-stable
  */
 function run(callable $main): mixed
 {
-    return EventLoop::getInstance()->run($main);
+    return \PfinalClub\Asyncio\Concurrency\CancellationScope::run(function() use ($main) {
+        return EventLoop::getInstance()->run($main);
+    });
 }
 
 /**
@@ -108,11 +109,6 @@ function gather(Task ...$tasks): array
 /**
  * 等待任务完成，带超时
  * 类似 asyncio.wait_for()
- * 
- * 改进：
- * - 修复 Timer 资源泄漏问题
- * - 确保在所有情况下都清理 Timer
- * - 保留原始异常链
  * 
  * @param callable|Task $awaitable 可调用对象或任务
  * @param float $timeout 超时时间（秒）
@@ -175,93 +171,10 @@ function wait_for(callable|Task $awaitable, float $timeout): mixed
 }
 
 /**
- * 等待第一个完成的任务
- * 类似 asyncio.wait() with FIRST_COMPLETED
- */
-function wait_first_completed(Task ...$tasks): array
-{
-    if (empty($tasks)) {
-        return [[], $tasks];
-    }
-    
-    $future = new Future();
-    $completed = [];
-    
-    foreach ($tasks as $index => $task) {
-        $task->addDoneCallback(function () use ($task, $index, &$completed, $future, $tasks) {
-            if (!$future->isDone()) {
-                $completed[] = $task;
-                $pending = array_filter($tasks, fn($t) => !$t->isDone());
-                $future->setResult([$completed, array_values($pending)]);
-            }
-        });
-    }
-    
-    return await_future($future);
-}
-
-/**
- * 等待所有任务完成
- * 类似 asyncio.wait() with ALL_COMPLETED
- */
-function wait_all_completed(Task ...$tasks): array
-{
-    if (empty($tasks)) {
-        return [[], []];
-    }
-    
-    gather(...$tasks);
-    $done = array_filter($tasks, fn($t) => $t->isDone());
-    $pending = array_filter($tasks, fn($t) => !$t->isDone());
-    
-    return [array_values($done), array_values($pending)];
-}
-
-/**
- * 创建一个 Future 对象
- */
-function create_future(): Future
-{
-    return new Future();
-}
-
-/**
- * 等待 Future 完成
- * 直接在回调中恢复 Fiber，无延迟
- */
-function await_future(Future $future): mixed
-{
-    $currentFiber = \Fiber::getCurrent();
-    
-    if (!$currentFiber) {
-        throw new \RuntimeException("await_future() can only be called within a Fiber");
-    }
-    
-    if ($future->isDone()) {
-        return $future->getResult();
-    }
-    
-    // 等待 Future 完成，立即恢复
-    $future->addDoneCallback(function () use ($currentFiber, $future) {
-        if ($currentFiber->isSuspended()) {
-            try {
-                if ($future->hasException()) {
-                    $currentFiber->throw($future->getException());
-                } else {
-                    $currentFiber->resume($future->getResult());
-                }
-            } catch (\Throwable $e) {
-                error_log("Error resuming fiber in await_future: " . $e->getMessage());
-            }
-        }
-    });
-    
-    return \Fiber::suspend();
-}
-
-/**
  * 获取当前运行的事件循环
  * 类似 asyncio.get_event_loop()
+ * 
+ * @api-stable
  */
 function get_event_loop(): EventLoop
 {
@@ -269,62 +182,11 @@ function get_event_loop(): EventLoop
 }
 
 /**
- * 在事件循环中调度回调
- */
-function call_soon(callable $callback, ...$args): void
-{
-    Timer::add(0.001, function () use ($callback, $args) {
-        $callback(...$args);
-    }, [], false);
-}
-
-/**
- * 延迟调度回调
- */
-function call_later(float $delay, callable $callback, ...$args): int
-{
-    return Timer::add($delay, function () use ($callback, $args) {
-        $callback(...$args);
-    }, [], false);
-}
-
-/**
- * 屏蔽任务取消
- * 类似 asyncio.shield()
- */
-function shield(Task $task): mixed
-{
-    $future = new Future();
-    
-    $task->addDoneCallback(function () use ($task, $future) {
-        if ($task->hasException()) {
-            $future->setException($task->getException());
-        } else {
-            $future->setResult($task->getResult());
-        }
-    });
-    
-    try {
-        return await_future($future);
-    } catch (TaskCancelledException $e) {
-        // 屏蔽取消，但任务继续运行
-        return await_future($future);
-    }
-}
-
-/**
- * 生成一个新的 Fiber 任务（spawn 别名）
- */
-function spawn(callable $callback, string $name = ''): Task
-{
-    return create_task($callback, $name);
-}
-
-/**
  * 创建信号量
  * 
  * @param int $max 最大并发数
  * @return Semaphore
+ * @api-stable
  */
 function semaphore(int $max): Semaphore
 {
@@ -336,6 +198,7 @@ function semaphore(int $max): Semaphore
  * 
  * @param string $key 键名
  * @param mixed $value 值
+ * @api-stable
  */
 function set_context(string $key, mixed $value): void
 {
@@ -348,6 +211,7 @@ function set_context(string $key, mixed $value): void
  * @param string $key 键名
  * @param mixed $default 默认值
  * @return mixed
+ * @api-stable
  */
 function get_context(string $key, mixed $default = null): mixed
 {
@@ -359,6 +223,7 @@ function get_context(string $key, mixed $default = null): mixed
  * 
  * @param string $key 键名
  * @return bool
+ * @api-stable
  */
 function has_context(string $key): bool
 {
@@ -369,6 +234,7 @@ function has_context(string $key): bool
  * 删除协程上下文变量
  * 
  * @param string $key 键名
+ * @api-stable
  */
 function delete_context(string $key): void
 {
@@ -380,6 +246,7 @@ function delete_context(string $key): void
  * 
  * @param bool $includeParent 是否包含父协程上下文
  * @return array
+ * @api-stable
  */
 function get_all_context(bool $includeParent = true): array
 {
@@ -388,6 +255,8 @@ function get_all_context(bool $includeParent = true): array
 
 /**
  * 清理当前协程的所有上下文
+ * 
+ * @api-stable
  */
 function clear_context(): void
 {

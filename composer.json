@@ -1,6 +1,6 @@
 {
   "name": "pfinalclub/asyncio",
-  "description": "基于 PHP Fiber 和 Workerman 的异步 IO 扩展包，提供类似 Python asyncio 的功能",
+  "description": "An embeddable, composable, and reasonable PHP Async Runtime",
   "type": "library",
   "keywords": ["async", "asyncio", "fiber", "coroutine", "workerman", "concurrent", "event-loop"],
   "license": "MIT",
@@ -10,6 +10,7 @@
       "email": "lampxiezi@gmail.com"
     }
   ],
+  "version": "3.0.0",
   "require": {
     "php": ">=8.1",
     "workerman/workerman": "^4.1"
@@ -22,8 +23,7 @@
       "PfinalClub\\Asyncio\\": "src/"
     },
     "files": [
-      "src/functions.php",
-      "src/Production/functions.php"
+      "src/functions.php"
     ]
   },
   "autoload-dev": {
