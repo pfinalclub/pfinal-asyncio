@@ -1,10 +1,10 @@
-# PHP AsyncIO v3.0.0
+# PHP AsyncIO v3.0.1
 
 **[English](README.md)** | **[中文文档](README_CN.md)**
 
 🚀 **An Embeddable, Composable, and Reasonable PHP Async Runtime**
 
-> **v3.0.0 Major Release**: Complete refactoring! Now focused purely on async runtime - 95%+ lighter and cleaner. See [Changelog](#changelog)
+> **v3.0.1 Release**: Code cleanup and optimization! Removed redundant files and improved code consistency.
 
 [![PHP Version](https://img.shields.io/badge/php-%3E%3D8.1-blue.svg)](https://www.php.net/)
 [![License](https://img.shields.io/badge/license-MIT-green.svg)](LICENSE)
@@ -30,7 +30,7 @@
 - ⏰ **Precise Timing** - < 0.1ms latency, timer-driven events
 - 🧠 **Context Management** - Coroutine-local context variables (like Python contextvars)
 
-### 📦 Architecture v3.0
+### 📦 Architecture
 ```
 src/
 ├── Core/              # 🎯 Core abstractions (frozen API)
@@ -298,75 +298,88 @@ run(function() {
 
 ## 📝 Changelog
 
+### v3.0.1 (2026-01-09) - Code Cleanup and Optimization
+
+#### 🧹 Code Cleanup and Refactoring
+
+**Removed Redundant Files**:
+- **AdvancedFiberCleanup.php**: Removed duplicate Fiber cleanup implementation
+- **ImprovedEventLoop.php**: Removed duplicate EventLoop implementation
+
+**Optimized Class References**:
+- Updated all Task class references to use `PfinalClub\Asyncio\Core\Task` directly
+- Maintained `Task.php` as an alias for backward compatibility
+- Improved code consistency across the codebase
+
 ### v3.0.0 (2025-01-08) - Core Runtime Refactoring 🎊
 
 **Major Philosophy Change**: Focused purely on async runtime problems
 
-#### 🎯 Core Improvements (95%+符合度)
+#### Core Improvements
 
 **Architecture Refactoring**:
-- ✅ **移除非核心功能**: Production, Debug 目录移至独立扩展包
-- ✅ **简化 Observable**: 从 800+ 行精简到 256 行 (70% 减少)
-- ✅ **精简核心 API**: functions.php 从 421 行精简到 263 行 (38% 减少)
-- ✅ **组件边界清晰**: Core, Concurrency, Resource, Observable 四大模块
-- ✅ **API 冻结**: 22 个 `@api-stable` 接口，0 个实验性 API
+- ✅ **Removed non-core features**: Production, Debug directories moved to separate extension packages
+- ✅ **Simplified Observable**: Reduced from 800+ lines to 256 lines (70% reduction)
+- ✅ **Streamlined core API**: functions.php reduced from 421 lines to 263 lines (38% reduction)
+- ✅ **Clear component boundaries**: Core, Concurrency, Resource, Observable four main modules
+- ✅ **API freeze**: 22 `@api-stable` interfaces, 0 experimental APIs
 
 **Code Quality**:
-- ✅ **文件数量**: 34 → 23 文件 (32% 减少)
-- ✅ **代码质量**: 92/100 分 (生产就绪)
-- ✅ **依赖最小化**: 仅依赖 workerman/workerman
-- ✅ **零语法错误**: 所有文件通过语法检查
-- ✅ **向后兼容**: 提供 Task 类别名
+- ✅ **File count**: 34 → 23 files (32% reduction)
+- ✅ **Code quality**: 92/100 score (production ready)
+- ✅ **Minimal dependencies**: Only depends on workerman/workerman
+- ✅ **Zero syntax errors**: All files pass syntax check
+- ✅ **Backward compatibility**: Task class alias provided
 
-#### 🚀 New Features
+#### New Features
 
 **Enhanced Structured Concurrency**:
-- 🔥 **CancellationScope**: 结构化任务取消，父子作用域管理
-- 🎯 **TaskGroup**: 任务组管理，spawn() 和 waitAll()
-- 📊 **GatherStrategy**: FAIL_FAST, WAIT_ALL, RETURN_PARTIAL 策略
+- 🔥 **CancellationScope**: Structured task cancellation, parent-child scope management
+- 🎯 **TaskGroup**: Task group management, spawn() and waitAll()
+- 📊 **GatherStrategy**: FAIL_FAST, WAIT_ALL, RETURN_PARTIAL strategies
 
 **Runtime Resource Management**:
-- 🌿 **AsyncResource**: 资源接口，支持自动清理
-- 🧠 **Context**: 协程上下文系统，类似 Python contextvars
-- ⚡ **Resource Manager**: 作用域绑定的资源生命周期管理
+- 🌿 **AsyncResource**: Resource interface with automatic cleanup support
+- 🧠 **Context**: Coroutine context system, similar to Python contextvars
+- ⚡ **Resource Manager**: Scope-bound resource lifecycle management
 
 **Observability (Simplified)**:
-- 👁️ **Observable**: 轻量级事件系统，默认关闭
-- 📊 **TaskEvent**: 任务生命周期事件
-- 🔌 **Observer**: 简化观察者接口
+- 👁️ **Observable**: Lightweight event system, disabled by default
+- 📊 **TaskEvent**: Task lifecycle events
+- 🔌 **Observer**: Simplified observer interface
 
-#### 📦 Removed Features (Available as Extensions)
+#### Removed Features (Available as Extensions)
 
 **Production Tools** → `pfinal/asyncio-production`:
-- 🚀 MultiProcessMode - 多进程部署
-- 💊 HealthCheck - 健康检查
-- 🛑 GracefulShutdown - 优雅关闭
-- 📏 ResourceLimits - 资源限制
-- 📊 AsyncIO Monitor - 监控面板
-- 🐛 AsyncIO Debugger - 调试工具
+- 🚀 MultiProcessMode - Multi-process deployment
+- 💊 HealthCheck - Health checks
+- 🛑 GracefulShutdown - Graceful shutdown
+- 📏 ResourceLimits - Resource limits
+- 📊 AsyncIO Monitor - Monitoring panel
+- 🐛 AsyncIO Debugger - Debugging tools
 
 **Advanced Features**:
-- 🛡️ Complex Debug - 复杂调试功能
-- 📈 Advanced Monitoring - 高级监控
-- 🔧 Performance Profiler - 性能分析
+- 🛡️ Complex Debug - Complex debugging features
+- 📈 Advanced Monitoring - Advanced monitoring
+- 🔧 Performance Profiler - Performance profiling
 
-#### 🔧 Technical Improvements
+#### Technical Improvements
 
 **Performance**:
-- ⚡ **启动速度**: 40% 提升 (文件减少)
-- 🧠 **内存占用**: 30% 减少 (精简架构)
-- 🎯 **零开销**: Observability 默认关闭
-- 📊 **优化清理**: 改进资源清理机制
+- ⚡ **Startup speed**: 40% improvement (file reduction)
+- 🧠 **Memory usage**: 30% reduction (streamlined architecture)
+- 🎯 **Zero overhead**: Observability disabled by default
+- 📊 **Optimized cleanup**: Improved resource cleanup mechanism
 
 **API Stability**:
-- 🔒 **接口冻结**: EventLoopInterface, TaskState, 等
-- 📝 **文档完善**: 22 个稳定 API 标记
-- 🔄 **向后兼容**: 提供别名和迁移路径
+- 🔒 **Interface freeze**: EventLoopInterface, TaskState, etc.
+- 📝 **Complete documentation**: 22 stable APIs marked
+- 🔄 **Backward compatibility**: Aliases and migration paths provided
 
 **Code Quality**:
-- 🏗️ **架构清晰**: 模块化设计，职责单一
-- 🧪 **类型安全**: 完整的类型注解
-- 📖 **文档完整**: 所有公共 API 有文档
+- 🏗️ **Clear architecture**: Modular design, single responsibility
+- 🧪 **Type safety**: Complete type annotations
+- 📖 **Complete documentation**: All public APIs documented
 
 ### v2.2.0 (2025-01-21) - Production-Grade Improvements
 
@@ -446,8 +459,8 @@ MIT License. See [LICENSE](LICENSE) file for details.
 
 ---
 
-**Version**: v3.0.0  
-**Release Date**: 2025-01-08  
+**Version**: v3.0.1  
+**Release Date**: 2026-01-09  
 **PHP**: >= 8.1  
 **Quality Score**: 92/100 (Production Ready)  
 **Philosophy**: Embeddable, Composable, Reasonable Async Runtime  

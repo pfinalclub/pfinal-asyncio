@@ -1,12 +1,12 @@
 <?php
 
 /**
- * Release validation script for AsyncIO v3.0.0
+ * Release validation script for AsyncIO v3.0.1
  * 
  * This script validates that the release is ready for production
  */
 
-echo "🚀 AsyncIO v3.0.0 Release Validation\n";
+echo "🚀 AsyncIO v3.0.1 Release Validation\n";
 echo "=====================================\n\n";
 
 // Check syntax for all PHP files
@@ -175,10 +175,10 @@ if ($composerJson['description'] === 'An embeddable, composable, and reasonable 
 echo "\n📖 7. README.md Check\n";
 $readmeContent = file_get_contents('README.md');
 
-if (strpos($readmeContent, 'v3.0.0') !== false) {
-    echo "✅ README.md references v3.0.0\n";
+if (strpos($readmeContent, 'v3.0.1') !== false) {
+    echo "✅ README.md references v3.0.1\n";
 } else {
-    echo "❌ README.md does not reference v3.0.0\n";
+    echo "❌ README.md does not reference v3.0.1\n";
     exit(1);
 }
 
