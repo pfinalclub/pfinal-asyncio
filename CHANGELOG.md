@@ -1,5 +1,22 @@
 # Changelog
 
+## [3.0.1] - 2026-01-09
+
+### 🧹 Code Cleanup and Refactoring
+
+#### Removed Redundant Files
+- **AdvancedFiberCleanup.php**: Removed duplicate Fiber cleanup implementation
+- **ImprovedEventLoop.php**: Removed duplicate EventLoop implementation
+
+#### Optimized Class References
+- Updated all Task class references to use `PfinalClub\Asyncio\Core\Task` directly
+- Maintained `Task.php` as an alias for backward compatibility
+- Improved code consistency across the codebase
+
+#### Backward Compatibility
+- `PfinalClub\Asyncio\Task` alias remains for existing code
+- No breaking changes introduced
+
 ## [3.0.0] - 2026-01-08
 
 ### 🎉 Major Release: Core Runtime Refactoring

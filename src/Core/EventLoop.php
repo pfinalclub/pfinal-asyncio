@@ -6,7 +6,7 @@ use Fiber;
 use Workerman\Timer;
 use Workerman\Worker;
 use PfinalClub\Asyncio\Core\Task;
-use PfinalClub\Asyncio\GatherException;
+use PfinalClub\Asyncio\Exception\GatherException;
 use PfinalClub\Asyncio\Observable\Observable;
 use PfinalClub\Asyncio\Observable\Events\TaskEvent;
 
@@ -25,11 +25,34 @@ final class EventLoop implements EventLoopInterface
     private int $fiberIdCounter = 0;
     private array $timers = [];
     private int $fiberCleanupCounter = 0;
-    private const CLEANUP_THRESHOLD = 100;
+    private const CLEANUP_THRESHOLD = 50; // 降低阈值到50，提高清理频率
     private static ?string $eventLoopType = null;
+    
+    // 延迟清理池 - 存储已终止的Fiber ID（语义已死）
+    private array $deferredCleanupPool = [];
+    private const DEFERRED_POOL_MAX_SIZE = 50;
+    
+    // 清理统计（O(1)操作）
+    private array $cleanupStats = [
+        'high_freq_cleanups' => 0,
+        'low_freq_cleanups' => 0,
+        'memory_pressure_triggers' => 0, // 只记录触发次数，不决定清理
+        'fibers_cleaned_total' => 0,
+        'peak_fiber_count' => 0,
+        'last_cleanup_time' => 0.0,
+    ];
+    
+    // 内存压力检测（仅触发策略）
+    private int $lastMemoryCheck = 0;
+    private const MEMORY_CHECK_INTERVAL = 5;
+    
+    // 三级调度器
+    private ?PriorityScheduler $scheduler = null;
     
     private function __construct()
     {
+        // 初始化三级调度器
+        $this->scheduler = new PriorityScheduler($this);
     }
     
     /**
@@ -102,8 +125,43 @@ final class EventLoop implements EventLoopInterface
     
     /**
      * 创建并启动新的 Fiber 任务
+     * 
+     * @deprecated 建议使用 schedule() 方法进行三级调度
      */
     public function createFiber(callable $callback, string $name = ''): Task
+    {
+        // 默认使用WORK级优先级进行调度
+        return $this->schedule($callback, SchedulerInterface::PRIORITY_WORK, $name);
+    }
+    
+    /**
+     * 三级调度：基于优先级调度任务
+     * 
+     * @param callable $callback 要执行的回调函数
+     * @param int $priority 优先级（SYSTEM/CONTROL/WORK）
+     * @param string $name 任务名称
+     * @return Task 创建的任务对象
+     */
+    public function schedule(callable $callback, int $priority = SchedulerInterface::PRIORITY_WORK, string $name = ''): Task
+    {
+        return $this->scheduler->schedule($callback, $priority, $name);
+    }
+    
+    /**
+     * 获取调度器实例
+     * 
+     * @return PriorityScheduler 调度器实例
+     */
+    public function getScheduler(): PriorityScheduler
+    {
+        return $this->scheduler;
+    }
+    
+    /**
+     * 内部方法：直接创建Fiber（不经过调度器）
+     * 用于SYSTEM级任务和调度器内部使用
+     */
+    public function createFiberDirect(callable $callback, string $name = ''): Task
     {
         $fiberId = ++$this->fiberIdCounter;
         $task = new Task($callback, $fiberId, $name ?: "Fiber-{$fiberId}");
@@ -151,12 +209,8 @@ final class EventLoop implements EventLoopInterface
             }
         }
         
-        // 每 100 个 Fiber 清理一次
-        $this->fiberCleanupCounter++;
-        if ($this->fiberCleanupCounter >= self::CLEANUP_THRESHOLD) {
-            $this->cleanupTerminatedFibers();
-            $this->fiberCleanupCounter = 0;
-        }
+        // 执行智能清理检查
+        $this->performSmartCleanupCheck();
         
         return $task;
     }
@@ -260,17 +314,56 @@ final class EventLoop implements EventLoopInterface
         $remaining = count($tasks);
         $firstException = null;
         
-        // 创建回调，收集所有结果和异常
+        // 记录所有任务ID，用于快速访问
+        $taskIds = [];
         foreach ($tasks as $index => $task) {
             if (!($task instanceof Task)) {
                 throw new \InvalidArgumentException("gather() expects an array of Task objects");
             }
             
-            // 记录任务名称
             $taskNames[$index] = $task->getName();
-            
+            $taskIds[$task->getId()] = $index;
+        }
+        
+        // 创建闭包时减少捕获的变量数量
+        // 使用弱引用来避免阻止Fiber回收
+        $fiberWeakRef = WeakReference::create($currentFiber);
+        
+        // 为快速失败策略创建任务取消函数，避免闭包捕获整个tasks数组
+        $cancelRemainingTasks = null;
+        if ($strategy === \PfinalClub\Asyncio\Concurrency\GatherStrategy::FAIL_FAST) {
+            $cancelRemainingTasks = function () use ($tasks) {
+                foreach ($tasks as $otherTask) {
+                    if (!$otherTask->isDone()) {
+                        $otherTask->cancel();
+                    }
+                }
+            };
+        }
+        
+        // 策略4：添加弱引用监控 - 观测闭包内存使用情况
+        // 仅在开发环境或调试模式下启用
+        $gatherStartTime = microtime(true);
+        $initialMemory = memory_get_usage(true);
+        
+        // 创建回调，收集所有结果和异常
+        foreach ($tasks as $index => $task) {
             // 使用局部变量减少闭包捕获
-            $task->addDoneCallback(function () use ($task, $index, &$results, &$exceptions, &$remaining, $currentFiber, &$firstException, $tasks, $strategy) {
+            $taskId = $task->getId();
+            
+            $task->addDoneCallback(function () use ( 
+                $task, 
+                $index, 
+                $taskId, 
+                &$results, 
+                &$exceptions, 
+                &$remaining, 
+                $fiberWeakRef, 
+                &$firstException, 
+                $strategy, 
+                $cancelRemainingTasks,
+                $taskNames
+            ) {
                 try {
                     if ($task->hasException()) {
                         $exceptions[$index] = $task->getException();
@@ -280,10 +373,8 @@ final class EventLoop implements EventLoopInterface
                             $firstException = $task->getException();
                             
                             // 取消所有其他未完成的任务
-                            foreach ($tasks as $otherIndex => $otherTask) {
-                                if ($otherIndex !== $index && !$otherTask->isDone()) {
-                                    $otherTask->cancel();
-                                }
+                            if ($cancelRemainingTasks) {
+                                $cancelRemainingTasks();
                             }
                         }
                     } else {
@@ -296,37 +387,73 @@ final class EventLoop implements EventLoopInterface
                 $remaining--;
                 
                 // 所有任务完成，立即恢复 Fiber
-                if ($remaining === 0 && $currentFiber->isSuspended()) {
-                    try {
-                        if (!empty($exceptions)) {
-                            // 根据策略处理异常
-                            if ($strategy === \PfinalClub\Asyncio\Concurrency\GatherStrategy::RETURN_PARTIAL) {
-                                // 返回部分结果，不抛出异常
-                                ksort($results);
-                                $currentFiber->resume(array_values($results));
+                if ($remaining === 0) {
+                    $fiber = $fiberWeakRef->get();
+                    if ($fiber && $fiber->isSuspended()) {
+                        try {
+                            // 准备返回结果，使用局部变量避免闭包引用
+                            $returnResults = $results;
+                            $returnExceptions = $exceptions;
+                            $returnTaskNames = $taskNames;
+                            
+                            // 主动断开引用链，加速内存回收
+                            $results = [];
+                            $exceptions = [];
+                            $firstException = null;
+                            
+                            if (!empty($returnExceptions)) {
+                                // 根据策略处理异常
+                                if ($strategy === \PfinalClub\Asyncio\Concurrency\GatherStrategy::RETURN_PARTIAL) {
+                                    // 返回部分结果，不抛出异常
+                                    ksort($returnResults);
+                                    $fiber->resume(array_values($returnResults));
+                                } else {
+                                    // 抛出聚合异常，包含所有失败和成功的信息
+                                    $fiber->throw(
+                                        new GatherException($returnExceptions, $returnResults, $returnTaskNames)
+                                    );
+                                }
                             } else {
-                                // 抛出聚合异常，包含所有失败和成功的信息
-                                $currentFiber->throw(
-                                    new GatherException($exceptions, $results, $taskNames ?? [])
-                                );
+                                ksort($returnResults);
+                                $fiber->resume(array_values($returnResults));
                             }
-                        } else {
-                            ksort($results);
-                            $currentFiber->resume(array_values($results));
+                        } catch (\Throwable $e) {
+                            // 记录严重错误，但不吞掉异常
+                            error_log("[CRITICAL] Error resuming fiber in gather: " . $e->getMessage());
+                            error_log("Stack trace: " . $e->getTraceAsString());
+                            // 重新抛出，确保错误不会被忽略
+                            throw $e;
                         }
-                    } catch (\Throwable $e) {
-                        // 记录严重错误，但不吞掉异常
-                        error_log("[CRITICAL] Error resuming fiber in gather: " . $e->getMessage());
-                        error_log("Stack trace: " . $e->getTraceAsString());
-                        // 重新抛出，确保错误不会被忽略
-                        throw $e;
                     }
                 }
             });
         }
         
         // 暂停等待所有任务完成
-        return Fiber::suspend();
+        $result = Fiber::suspend();
+        
+        // 策略4：弱引用监控 - 报告内存使用情况
+        // 仅在开发环境或调试模式下启用
+        if (defined('PFINAL_ASYNCIO_DEBUG') && PFINAL_ASYNCIO_DEBUG) {
+            $gatherEndTime = microtime(true);
+            $finalMemory = memory_get_usage(true);
+            $memoryUsed = $finalMemory - $initialMemory;
+            $duration = $gatherEndTime - $gatherStartTime;
+            
+            // 使用error_log避免影响正常输出
+            error_log(
+                "[PFINAL_ASYNCIO_DEBUG] gather() 监控: " .
+                "耗时=" . round($duration * 1000, 2) . "ms, " .
+                "内存使用=" . round($memoryUsed / 1024 / 1024, 2) . "MB, " .
+                "任务数=" . count($taskIds) . ", " .
+                "策略=" . $strategy->name
+            );
+        }
+        
+        // 主动清理，断开引用链
+        unset($tasks, $results, $exceptions, $taskNames, $taskIds, $fiberWeakRef, $cancelRemainingTasks);
+        
+        return $result;
     }
     
     /**
@@ -455,7 +582,7 @@ final class EventLoop implements EventLoopInterface
     }
     
     /**
-     * 清理已终止的 Fiber（按需调用）
+     * 清理已终止的 Fiber（按需调用）- 只清理语义已死的Fiber
      */
     private function cleanupTerminatedFibers(): void
     {
@@ -464,6 +591,180 @@ final class EventLoop implements EventLoopInterface
                 unset($this->fibers[$fiberId]);
             }
         }
+    }
+    
+    /**
+     * 高频清理：热路径只做O(1)/O(k)工作
+     * 快速扫描并标记已终止的Fiber，延迟清理
+     */
+    private function highFrequencyCleanup(): void
+    {
+        $this->cleanupStats['high_freq_cleanups']++;
+        
+        // O(k)操作：快速扫描已终止的Fiber（k=当前活跃Fiber数）
+        $terminatedCount = 0;
+        $scannedCount = 0;
+        foreach ($this->fibers as $fiberId => $info) {
+            $scannedCount++;
+            
+            // 只清理语义已死的Fiber
+            if ($info['fiber']->isTerminated()) {
+                // 避免重复加入延迟清理池
+                if (!in_array($fiberId, $this->deferredCleanupPool, true)) {
+                    $this->deferredCleanupPool[] = $fiberId;
+                    $terminatedCount++;
+                }
+            }
+            
+            // 限制扫描数量，避免O(n)操作（最多扫描50个）
+            if ($scannedCount >= 50) {
+                break;
+            }
+        }
+        
+        // 延迟清理：池满时批量清理
+        if (count($this->deferredCleanupPool) >= self::DEFERRED_POOL_MAX_SIZE) {
+            $this->processDeferredCleanupPool();
+        }
+    }
+    
+    /**
+     * 处理延迟清理池：批量清理语义已死的Fiber
+     */
+    private function processDeferredCleanupPool(): void
+    {
+        $cleanedCount = 0;
+        foreach ($this->deferredCleanupPool as $fiberId) {
+            if (isset($this->fibers[$fiberId]) && $this->fibers[$fiberId]['fiber']->isTerminated()) {
+                unset($this->fibers[$fiberId]);
+                $cleanedCount++;
+            }
+        }
+        
+        $this->deferredCleanupPool = [];
+        $this->cleanupStats['fibers_cleaned_total'] += $cleanedCount;
+        $this->cleanupStats['last_cleanup_time'] = microtime(true);
+    }
+    
+    /**
+     * 内存压力检测：仅触发策略，不决定对象生死
+     */
+    private function hasMemoryPressure(): bool
+    {
+        // 基于Fiber数量压力检测
+        $currentCount = count($this->fibers);
+        $peakCount = $this->cleanupStats['peak_fiber_count'];
+        
+        // 如果当前Fiber数量超过峰值80%，认为有压力
+        if ($peakCount > 0 && $currentCount > $peakCount * 0.8) {
+            return true;
+        }
+        
+        // 基于PHP内存使用压力检测
+        $memoryLimit = ini_get('memory_limit');
+        if ($memoryLimit !== '-1') {
+            $memoryUsage = memory_get_usage(true);
+            $limitBytes = $this->parseMemoryLimit($memoryLimit);
+            
+            // 内存使用超过80%时触发策略
+            if ($memoryUsage > $limitBytes * 0.8) {
+                return true;
+            }
+        }
+        
+        return false;
+    }
+    
+    /**
+     * 触发内存压力清理策略：仅触发，不强制清理
+     */
+    private function triggerMemoryPressureCleanup(): void
+    {
+        // 内存压力下，更频繁地处理延迟清理池
+        $this->processDeferredCleanupPool();
+        
+        // 触发低频深度清理（后台执行）
+        Timer::add(0.1, function() { // 100ms后执行
+            $this->lowFrequencyDeepCleanup();
+        }, [], false);
+    }
+    
+    /**
+     * 低频深度清理：后台执行，不影响热路径
+     */
+    private function lowFrequencyDeepCleanup(): void
+    {
+        $this->cleanupStats['low_freq_cleanups']++;
+        
+        // 深度扫描所有Fiber，清理语义已死的
+        $cleanedCount = 0;
+        foreach ($this->fibers as $fiberId => $info) {
+            if ($info['fiber']->isTerminated()) {
+                unset($this->fibers[$fiberId]);
+                $cleanedCount++;
+            }
+        }
+        
+        $this->cleanupStats['fibers_cleaned_total'] += $cleanedCount;
+        $this->cleanupStats['last_cleanup_time'] = microtime(true);
+    }
+    
+    /**
+     * 解析内存限制字符串为字节数
+     */
+    private function parseMemoryLimit(string $limit): int
+    {
+        $value = (int)$limit;
+        $unit = strtoupper(substr($limit, -1));
+        
+        return match($unit) {
+            'G' => $value * 1024 * 1024 * 1024,
+            'M' => $value * 1024 * 1024,
+            'K' => $value * 1024,
+            default => $value,
+        };
+    }
+    
+    /**
+     * 执行智能清理检查
+     */
+    private function performSmartCleanupCheck(): void
+    {
+        // 热路径优化：只做O(1)操作
+        $this->fiberCleanupCounter++;
+        
+        // O(1)统计：更新峰值Fiber数量
+        $this->cleanupStats['peak_fiber_count'] = max(
+            $this->cleanupStats['peak_fiber_count'], 
+            count($this->fibers)
+        );
+        
+        // 高频清理：每50个任务创建时触发快速扫描
+        if ($this->fiberCleanupCounter >= self::CLEANUP_THRESHOLD) {
+            $this->highFrequencyCleanup();
+            $this->fiberCleanupCounter = 0;
+        }
+        
+        // 内存压力检测：仅触发策略，不决定清理（降低检测频率）
+        $currentTime = time();
+        if ($currentTime - $this->lastMemoryCheck >= self::MEMORY_CHECK_INTERVAL) {
+            $this->lastMemoryCheck = $currentTime;
+            
+            // 只在有活跃Fiber时检测内存压力
+            if (!empty($this->fibers) && $this->hasMemoryPressure()) {
+                $this->cleanupStats['memory_pressure_triggers']++;
+                // 仅触发策略，清理仍基于Fiber状态
+                $this->triggerMemoryPressureCleanup();
+            }
+        }
+    }
+    
+    /**
+     * 获取清理统计信息
+     */
+    public function getCleanupStats(): array
+    {
+        return $this->cleanupStats;
     }
     
     /**

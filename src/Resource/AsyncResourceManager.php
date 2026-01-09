@@ -3,6 +3,8 @@
 namespace PfinalClub\Asyncio\Resource;
 
 use PfinalClub\Asyncio\Concurrency\CancellationScope;
+use PfinalClub\Asyncio\Observable\Observable;
+use PfinalClub\Asyncio\Observable\Events\ResourceEvent;
 
 /**
  * 异步资源管理器 - 管理 Runtime 资源的生命周期
@@ -38,7 +40,12 @@ class AsyncResourceManager
         
         self::$resources[$scopeId][] = $resource;
         
-        
+        // 发送资源注册事件
+        if (Observable::getInstance()->isEnabled()) {
+            Observable::getInstance()->emitResourceEvent(
+                new ResourceEvent(ResourceEvent::REGISTERED, $resource)
+            );
+        }
         
         // 定期清理过期资源
         self::$cleanupCounter++;
@@ -96,7 +103,12 @@ class AsyncResourceManager
         foreach (self::$resources[$scopeId] as $resource) {
             try {
                 if (!$resource->isClosed()) {
-                    
+                    // 发送资源关闭事件
+                    if (Observable::getInstance()->isEnabled()) {
+                        Observable::getInstance()->emitResourceEvent(
+                            new ResourceEvent(ResourceEvent::CLOSED, $resource)
+                        );
+                    }
                     
                     $resource->close();
                 }

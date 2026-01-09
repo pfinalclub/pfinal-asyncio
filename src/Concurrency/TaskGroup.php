@@ -2,7 +2,7 @@
 
 namespace PfinalClub\Asyncio\Concurrency;
 
-use PfinalClub\Asyncio\Task;
+use PfinalClub\Asyncio\Core\Task;
 use function PfinalClub\Asyncio\create_task;
 use function PfinalClub\Asyncio\await;
 

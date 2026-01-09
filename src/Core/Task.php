@@ -2,7 +2,7 @@
 
 namespace PfinalClub\Asyncio\Core;
 
-use PfinalClub\Asyncio\TaskCancelledException;
+use PfinalClub\Asyncio\Exception\TaskCancelledException;
 use PfinalClub\Asyncio\Concurrency\CancellationScope;
 use PfinalClub\Asyncio\Observable\Observable;
 use PfinalClub\Asyncio\Observable\Events\TaskEvent;

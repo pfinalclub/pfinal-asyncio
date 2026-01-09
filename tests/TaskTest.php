@@ -3,7 +3,7 @@
 namespace PfinalClub\Asyncio\Tests;
 
 use PHPUnit\Framework\TestCase;
-use PfinalClub\Asyncio\Task;
+use PfinalClub\Asyncio\Core\Task;
 use PfinalClub\Asyncio\TaskCancelledException;
 use function PfinalClub\Asyncio\{run, create_task, sleep};
 

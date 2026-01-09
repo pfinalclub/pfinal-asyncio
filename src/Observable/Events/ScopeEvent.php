@@ -2,39 +2,36 @@
 
 namespace PfinalClub\Asyncio\Observable\Events;
 
-use PfinalClub\Asyncio\Core\Task;
+use PfinalClub\Asyncio\Concurrency\CancellationScope;
 
 /**
- * 任务事件 - 表示任务生命周期中的各种事件
+ * 作用域事件 - 表示 CancellationScope 生命周期中的各种事件
  * 
  * @api-stable
  */
-class TaskEvent
+class ScopeEvent
 {
     public const CREATED = 'created';
-    public const STARTED = 'started';
+    public const ENTERED = 'entered';
+    public const EXITED = 'exited';
     public const COMPLETED = 'completed';
-    public const FAILED = 'failed';
     public const CANCELLED = 'cancelled';
     
     private string $type;
-    private Task $task;
+    private CancellationScope $scope;
     private float $timestamp;
-    private ?\Throwable $exception = null;
     
     /**
      * 构造函数
      * 
      * @param string $type 事件类型
-     * @param Task $task 任务对象
-     * @param ?\Throwable $exception 异常对象，仅在失败事件中使用
+     * @param CancellationScope $scope 作用域对象
      */
-    public function __construct(string $type, Task $task, ?\Throwable $exception = null)
+    public function __construct(string $type, CancellationScope $scope)
     {
         $this->type = $type;
-        $this->task = $task;
+        $this->scope = $scope;
         $this->timestamp = microtime(true);
-        $this->exception = $exception;
     }
     
     /**
@@ -48,13 +45,13 @@ class TaskEvent
     }
     
     /**
-     * 获取任务对象
+     * 获取作用域对象
      * 
-     * @return Task 任务对象
+     * @return CancellationScope 作用域对象
      */
-    public function getTask(): Task
+    public function getScope(): CancellationScope
     {
-        return $this->task;
+        return $this->scope;
     }
     
     /**
@@ -68,16 +65,6 @@ class TaskEvent
     }
     
     /**
-     * 获取异常对象
-     * 
-     * @return ?\Throwable 异常对象，仅在失败事件中使用
-     */
-    public function getException(): ?\Throwable
-    {
-        return $this->exception;
-    }
-    
-    /**
      * 检查是否为创建事件
      * 
      * @return bool 是否为创建事件
@@ -88,13 +75,23 @@ class TaskEvent
     }
     
     /**
-     * 检查是否为开始事件
+     * 检查是否为进入事件
      * 
-     * @return bool 是否为开始事件
+     * @return bool 是否为进入事件
      */
-    public function isStarted(): bool
+    public function isEntered(): bool
     {
-        return $this->type === self::STARTED;
+        return $this->type === self::ENTERED;
+    }
+    
+    /**
+     * 检查是否为退出事件
+     * 
+     * @return bool 是否为退出事件
+     */
+    public function isExited(): bool
+    {
+        return $this->type === self::EXITED;
     }
     
     /**
@@ -105,16 +102,6 @@ class TaskEvent
     public function isCompleted(): bool
     {
         return $this->type === self::COMPLETED;
-    }
-    
-    /**
-     * 检查是否为失败事件
-     * 
-     * @return bool 是否为失败事件
-     */
-    public function isFailed(): bool
-    {
-        return $this->type === self::FAILED;
     }
     
     /**

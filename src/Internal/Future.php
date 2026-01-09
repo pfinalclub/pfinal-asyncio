@@ -1,6 +1,6 @@
 <?php
 
-namespace PfinalClub\Asyncio;
+namespace PfinalClub\Asyncio\Internal;
 
 /**
  * Future - 表示一个未来的结果

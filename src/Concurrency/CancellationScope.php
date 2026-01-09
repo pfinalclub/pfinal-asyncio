@@ -2,7 +2,9 @@
 
 namespace PfinalClub\Asyncio\Concurrency;
 
-use PfinalClub\Asyncio\Task;
+use PfinalClub\Asyncio\Core\Task;
+use PfinalClub\Asyncio\Observable\Observable;
+use PfinalClub\Asyncio\Observable\Events\ScopeEvent;
 
 /**
  * 取消作用域 - 支持结构化并发取消
@@ -28,12 +30,22 @@ class CancellationScope
         $scope->parent = self::$current;
         self::$current = $scope;
         
-        
+        // 发送作用域创建事件
+        if (Observable::getInstance()->isEnabled()) {
+            Observable::getInstance()->emitScopeEvent(
+                new ScopeEvent(ScopeEvent::CREATED, $scope)
+            );
+        }
         
         try {
             $result = $callback($scope);
             
-
+            // 发送作用域完成事件（在 finally 之前，避免和 cancel 冲突）
+            if (Observable::getInstance()->isEnabled()) {
+                Observable::getInstance()->emitScopeEvent(
+                    new ScopeEvent(ScopeEvent::COMPLETED, $scope)
+                );
+            }
             
             return $result;
         } finally {
@@ -65,7 +77,12 @@ class CancellationScope
         
         $this->cancelled = true;
         
-        
+        // 发送作用域取消事件
+        if (Observable::getInstance()->isEnabled()) {
+            Observable::getInstance()->emitScopeEvent(
+                new ScopeEvent(ScopeEvent::CANCELLED, $this)
+            );
+        }
         
         // 取消所有注册的任务
         foreach ($this->tasks as $task) {

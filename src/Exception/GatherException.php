@@ -1,6 +1,6 @@
 <?php
 
-namespace PfinalClub\Asyncio;
+namespace PfinalClub\Asyncio\Exception;
 
 /**
  * Gather 聚合异常

@@ -2,6 +2,8 @@
 
 namespace PfinalClub\Asyncio;
 
+use PfinalClub\Asyncio\Internal\Future;
+
 /**
  * 信号量 - 用于限制并发数量
  * 
